@@ -145,6 +145,7 @@ class GeminiVisualizer:
         body = {
             "contents": [
                 {
+                    "role": "user",  # required by Vertex AI; accepted by the Developer API
                     "parts": [
                         {"text": instruction},
                         {
