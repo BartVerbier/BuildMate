@@ -26,6 +26,20 @@ final class BackendDiscovery: ObservableObject {
             for: .bonjour(type: "_buildpilot._tcp", domain: nil),
             using: NWParameters(tls: nil, tcp: NWProtocolTCP.Options())
         )
+        browser.stateUpdateHandler = { state in
+            switch state {
+            case .ready:
+                visitLog.info("Bonjour browser ready")
+            case .waiting(let error):
+                visitLog.error("Bonjour browser waiting: \(error.localizedDescription) — likely Local Network permission (PolicyDenied)")
+            case .failed(let error):
+                visitLog.error("Bonjour browser failed: \(error.localizedDescription)")
+            case .cancelled:
+                visitLog.info("Bonjour browser cancelled")
+            default:
+                break
+            }
+        }
         browser.browseResultsChangedHandler = { [weak self] results, _ in
             Task { @MainActor in
                 self?.macs = results.compactMap { result in
