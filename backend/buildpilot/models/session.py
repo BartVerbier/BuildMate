@@ -58,6 +58,19 @@ class RoomMeasurement(BaseModel):
     window_area_m2: float = Field(ge=0)
     paintable_surface_area_m2: float = Field(ge=0)
     confidence_score: float = Field(ge=0, le=1)
+    notes: List[str] = Field(default_factory=list)
+
+
+class PaintScope(BaseModel):
+    """Which surfaces the customer wants painted.
+
+    Filled by the requirements extractor from the conversation; consumed by
+    the deterministic estimator. This typed structure exists so the estimator
+    never has to interpret free text.
+    """
+
+    walls: bool = True
+    ceiling: bool = True
 
 
 class RequirementExtraction(BaseModel):
@@ -67,6 +80,8 @@ class RequirementExtraction(BaseModel):
     exclusions: List[str] = Field(default_factory=list)
     preparation_required: List[str] = Field(default_factory=list)
     special_notes: List[str] = Field(default_factory=list)
+    paint_scope: PaintScope = Field(default_factory=PaintScope)
+    transcript_available: bool = True
 
 
 class CompanyProfile(BaseModel):
@@ -78,6 +93,7 @@ class CompanyProfile(BaseModel):
     primer_cost_eur_per_litre: float = Field(ge=0)
     paint_coverage_m2_per_litre: float = Field(gt=0)
     primer_coverage_m2_per_litre: float = Field(gt=0)
+    labour_m2_per_hour: float = Field(gt=0)
     coats: int = Field(ge=1)
     waste_factor: float = Field(ge=0)
     prep_factor: float = Field(ge=0)
@@ -97,6 +113,7 @@ class EstimateDraft(BaseModel):
     labour_cost_eur: float = Field(ge=0)
     suggested_quotation_eur: float = Field(ge=0)
     currency: str = "EUR"
+    assumptions: List[str] = Field(default_factory=list)
 
 
 class Session(BaseModel):

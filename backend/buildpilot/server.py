@@ -1,0 +1,108 @@
+"""Local HTTP API for the iPhone client.
+
+Endpoints:
+    GET  /health           — server + stage availability
+    POST /sessions         — multipart upload (room_scan JSON, audio m4a) →
+                             runs the full pipeline synchronously, returns the
+                             completed Session including the draft estimate
+    GET  /sessions/{id}    — re-fetch a session (reconnect after a dropped call)
+
+Run:
+    cd backend && ../.venv/bin/python -m uvicorn buildpilot.server:app --host 0.0.0.0 --port 8787
+
+Synchronous processing is a deliberate V1 choice: one painter, one phone, one
+Mac. The session directory persists every artifact, so a dropped connection
+loses nothing — the phone re-fetches via GET /sessions/{id}.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+from typing import Optional
+
+from fastapi import FastAPI, File, HTTPException, UploadFile
+
+from buildpilot.config import DEFAULT_COMPANY_PROFILE
+from buildpilot.pipeline import VisitPipeline
+from buildpilot.pipelines.estimator import DeterministicEstimator
+from buildpilot.pipelines.extraction import ClaudeRequirementsExtractor
+from buildpilot.pipelines.measurement import RoomPlanMeasurementEngine
+from buildpilot.pipelines.transcription import MlxWhisperTranscriber
+from buildpilot.session_store import SessionStore
+
+MAX_ROOM_SCAN_BYTES = 50 * 1024 * 1024
+MAX_AUDIO_BYTES = 500 * 1024 * 1024
+
+
+def default_pipeline() -> VisitPipeline:
+    return VisitPipeline(
+        measurement_engine=RoomPlanMeasurementEngine(),
+        transcriber=MlxWhisperTranscriber(),
+        extractor=ClaudeRequirementsExtractor(),
+        estimator=DeterministicEstimator(),
+        company_profile=DEFAULT_COMPANY_PROFILE,
+    )
+
+
+def default_store() -> SessionStore:
+    root = os.environ.get("BUILDPILOT_SESSIONS_DIR")
+    if root:
+        return SessionStore(Path(root))
+    return SessionStore(Path(__file__).resolve().parents[1] / "sessions")
+
+
+def create_app(
+    pipeline: Optional[VisitPipeline] = None,
+    store: Optional[SessionStore] = None,
+) -> FastAPI:
+    app = FastAPI(title="Build Pilot backend", version="0.1.0")
+    app.state.pipeline = pipeline or default_pipeline()
+    app.state.store = store or default_store()
+
+    @app.get("/health")
+    def health() -> dict:
+        return {
+            "status": "ok",
+            "transcriber_available": MlxWhisperTranscriber.is_available(),
+            "extractor_credentials_hint": ClaudeRequirementsExtractor.is_available(),
+        }
+
+    @app.post("/sessions")
+    async def create_session(
+        room_scan: UploadFile = File(...),
+        audio: Optional[UploadFile] = File(None),
+    ) -> dict:
+        room_bytes = await room_scan.read()
+        if len(room_bytes) > MAX_ROOM_SCAN_BYTES:
+            raise HTTPException(413, "Room scan too large")
+        try:
+            json.loads(room_bytes)
+        except (ValueError, UnicodeDecodeError):
+            raise HTTPException(400, "room_scan must be valid JSON (CapturedRoom export)")
+
+        audio_bytes = None
+        if audio is not None:
+            audio_bytes = await audio.read()
+            if len(audio_bytes) > MAX_AUDIO_BYTES:
+                raise HTTPException(413, "Audio too large")
+
+        session = app.state.store.create_session(room_bytes, audio_bytes)
+        session = app.state.pipeline.run(app.state.store, session)
+        return session.model_dump(mode="json")
+
+    @app.get("/sessions/{session_id}")
+    def get_session(session_id: str) -> dict:
+        try:
+            session = app.state.store.load(session_id)
+        except ValueError:
+            raise HTTPException(400, "Invalid session id")
+        if session is None:
+            raise HTTPException(404, "Session not found")
+        return session.model_dump(mode="json")
+
+    return app
+
+
+app = create_app()

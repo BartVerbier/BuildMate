@@ -1,0 +1,67 @@
+{
+  "_comment": "SYNTHETIC fixture shaped like Apple CapturedRoom JSON. 5m x 3m room, 2.5m walls, one door (0.9x2.0), one window (1.2x1.0). Real scans belong in samples/rooms/, never here.",
+  "version": 2,
+  "identifier": "SYNTHETIC-0000-0000-0000-000000000001",
+  "story": 0,
+  "walls": [
+    {
+      "identifier": "wall-north",
+      "category": { "wall": {} },
+      "confidence": { "high": {} },
+      "dimensions": [5.0, 2.5, 0.0],
+      "transform": [[1,0,0,0],[0,1,0,0],[0,0,1,0],[0.0,1.25,-1.5,1]]
+    },
+    {
+      "identifier": "wall-south",
+      "category": { "wall": {} },
+      "confidence": "medium",
+      "dimensions": [5.0, 2.5, 0.0],
+      "transform": [[1,0,0,0],[0,1,0,0],[0,0,1,0],[0.0,1.25,1.5,1]]
+    },
+    {
+      "identifier": "wall-west",
+      "category": { "wall": {} },
+      "confidence": { "high": {} },
+      "dimensions": [3.0, 2.5, 0.0],
+      "transform": [[0,0,1,0],[0,1,0,0],[-1,0,0,0],[-2.5,1.25,0.0,1]]
+    },
+    {
+      "identifier": "wall-east",
+      "category": { "wall": {} },
+      "confidence": { "high": {} },
+      "dimensions": [3.0, 2.5, 0.0],
+      "transform": [[0,0,1,0],[0,1,0,0],[-1,0,0,0],[2.5,1.25,0.0,1]]
+    }
+  ],
+  "doors": [
+    {
+      "identifier": "door-1",
+      "category": { "door": { "isOpen": false } },
+      "confidence": { "high": {} },
+      "dimensions": [0.9, 2.0, 0.0],
+      "transform": [[1,0,0,0],[0,1,0,0],[0,0,1,0],[1.0,1.0,1.5,1]]
+    }
+  ],
+  "windows": [
+    {
+      "identifier": "window-1",
+      "category": { "window": {} },
+      "confidence": { "high": {} },
+      "dimensions": [1.2, 1.0, 0.0],
+      "transform": [[1,0,0,0],[0,1,0,0],[0,0,1,0],[-1.0,1.5,-1.5,1]]
+    }
+  ],
+  "openings": [],
+  "floors": [
+    {
+      "identifier": "floor-1",
+      "category": { "floor": {} },
+      "confidence": { "high": {} },
+      "dimensions": [5.0, 3.0, 0.0],
+      "polygonCorners": [[-2.5,-1.5,0.0],[2.5,-1.5,0.0],[2.5,1.5,0.0],[-2.5,1.5,0.0]],
+      "transform": [[1,0,0,0],[0,0,-1,0],[0,1,0,0],[0.0,0.0,0.0,1]]
+    }
+  ],
+  "objects": [],
+  "sections": []
+}

@@ -23,6 +23,7 @@ def make_company_profile(**overrides) -> CompanyProfile:
         primer_cost_eur_per_litre=20.0,
         paint_coverage_m2_per_litre=12.0,
         primer_coverage_m2_per_litre=10.0,
+        labour_m2_per_hour=10.0,
         coats=2,
         waste_factor=0.1,
         prep_factor=0.15,
