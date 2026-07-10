@@ -163,6 +163,23 @@ Seams cut now so the migration is minimal later:
 Out of scope until the cloud milestone: authentication, TLS configuration,
 multi-user storage.
 
+## Decision 22 — Photo documentation and the quotation package (2026-07-10)
+
+Every visit is a permanent project record: scan, audio, transcript,
+extraction, measurements, estimate, quote PDF, and photos.
+
+- Photos are captured on the estimate screen — RoomPlan owns the camera
+  exclusively during scanning (Apple constraint), so "Before" photos are
+  taken right after the scan while still in the room, and "After" photos
+  when the visit is reopened from history. Kinds: before / progress / after.
+- Photos live on the phone (Documents) and are archived best-effort to the
+  backend session directory via POST /sessions/{id}/photos.
+- The quote PDF is paginated A4: letterhead (logo + company + contact),
+  customer details, date/time, price with VAT line, summary; details page
+  (measurements, scope, notes, customer-safe calculation basis, editable
+  Terms & Conditions); then "Existing Condition" (before photos) and
+  "Completed Result" (after photos, omitted when none), four per page.
+
 ## Rationale
 
 These decisions are intended to reduce complexity and increase the likelihood of building a working prototype quickly. The core value proposition is not the scanning technology itself, but the automation of the site visit and the generation of a useful draft estimate.

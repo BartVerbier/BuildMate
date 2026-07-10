@@ -1,3 +1,4 @@
+import PhotosUI
 import SwiftUI
 
 /// Home: recent visits + one primary action. The screen answers exactly one
@@ -52,7 +53,7 @@ struct VisitsHomeView: View {
             Section("Recent Visits") {
                 ForEach(history.records) { record in
                     NavigationLink {
-                        EstimateView(session: record.session, visitName: record.name, onDone: nil)
+                        EstimateView(session: record.session, visitName: record.name, history: history, onDone: nil)
                     } label: {
                         VisitRow(record: record)
                     }
@@ -120,6 +121,9 @@ struct SettingsSheet: View {
     @AppStorage("business.painter") private var painterName = ""
     @AppStorage("business.phone") private var businessPhone = ""
     @AppStorage("business.email") private var businessEmail = ""
+    @AppStorage("business.terms") private var terms = BusinessIdentity.defaultTerms
+    @State private var logoSelection: PhotosPickerItem?
+    @State private var logo: UIImage? = UIImage(contentsOfFile: BusinessIdentity.logoFileURL.path)
 
     var body: some View {
         NavigationStack {
@@ -141,6 +145,42 @@ struct SettingsSheet: View {
                     Text("Your Business")
                 } footer: {
                     Text("Shown on every quote you share with a customer.")
+                }
+
+                Section {
+                    PhotosPicker(selection: $logoSelection, matching: .images) {
+                        HStack {
+                            Text(logo == nil ? "Add company logo" : "Change company logo")
+                            Spacer()
+                            if let logo {
+                                Image(uiImage: logo)
+                                    .resizable()
+                                    .scaledToFit()
+                                    .frame(height: 32)
+                                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                            }
+                        }
+                    }
+                    if logo != nil {
+                        Button("Remove logo", role: .destructive) {
+                            logo = nil
+                            BusinessIdentity.saveLogo(nil)
+                        }
+                    }
+                } header: {
+                    Text("Company Logo")
+                } footer: {
+                    Text("Appears at the top of the quote PDF.")
+                }
+
+                Section {
+                    TextEditor(text: $terms)
+                        .frame(minHeight: 90)
+                        .font(.footnote)
+                } header: {
+                    Text("Terms & Conditions")
+                } footer: {
+                    Text("Printed at the bottom of every quote.")
                 }
 
                 Section {
@@ -191,6 +231,16 @@ struct SettingsSheet: View {
         .presentationDetents([.large])
         .onAppear { discovery.start() }
         .onDisappear { discovery.stop() }
+        .onChange(of: logoSelection) { _, item in
+            guard let item else { return }
+            Task {
+                if let data = try? await item.loadTransferable(type: Data.self),
+                   let image = UIImage(data: data) {
+                    logo = image
+                    BusinessIdentity.saveLogo(image)
+                }
+            }
+        }
     }
 
     /// Per-row state: spinner while this Mac is being tried, then a green

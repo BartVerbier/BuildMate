@@ -10,7 +10,14 @@ struct SessionResponse: Codable {
     let measurements: RoomMeasurement?
     let requirements: RequirementExtraction?
     let estimate: EstimateDraft?
+    let companyProfile: CompanyProfileInfo? // optional: absent in older stored visits
     let rawMetadata: [String: String]?
+}
+
+/// The slice of the company profile the app displays (VAT line on the quote).
+struct CompanyProfileInfo: Codable {
+    let vatRate: Double
+    let currency: String
 }
 
 struct RoomMeasurement: Codable {

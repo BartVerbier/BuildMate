@@ -207,6 +207,38 @@ def test_room_and_transcript_endpoints(tmp_path):
     assert "Paint" in transcript.text
 
 
+def test_photo_archive(tmp_path):
+    client, store = make_client(tmp_path)
+    session_id = upload(client).json()["session_id"]
+
+    fake_jpeg = b"\xff\xd8\xff\xe0" + b"x" * 100
+    for kind in ("before", "before", "after"):
+        response = client.post(
+            f"/sessions/{session_id}/photos",
+            files={"photo": ("p.jpg", fake_jpeg, "image/jpeg")},
+            data={"kind": kind},
+        )
+        assert response.status_code == 200
+
+    photos_dir = store.session_dir(session_id) / "photos"
+    assert sorted(p.name for p in photos_dir.iterdir()) == [
+        "after-01.jpg",
+        "before-01.jpg",
+        "before-02.jpg",
+    ]
+
+
+def test_photo_invalid_kind_rejected(tmp_path):
+    client, _ = make_client(tmp_path)
+    session_id = upload(client).json()["session_id"]
+    response = client.post(
+        f"/sessions/{session_id}/photos",
+        files={"photo": ("p.jpg", b"\xff\xd8data", "image/jpeg")},
+        data={"kind": "during"},
+    )
+    assert response.status_code == 400
+
+
 def test_transcript_404_when_no_audio(tmp_path):
     client, _ = make_client(tmp_path)
     session_id = upload(client, with_audio=False).json()["session_id"]

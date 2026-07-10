@@ -36,7 +36,7 @@ struct ContentView: View {
             ProcessingView(stage: stage)
         case .done(let session):
             if visit.readbackConfirmed {
-                EstimateView(session: session, visitName: visit.visitName) {
+                EstimateView(session: session, visitName: visit.visitName, history: visit.history) {
                     visit.reset()
                 }
             } else {

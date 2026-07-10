@@ -73,6 +73,30 @@ struct HTTPBackendClient: BackendClient {
         return try decoder.decode(SessionResponse.self, from: data)
     }
 
+    /// Archives a visit photo to the backend's session directory (the
+    /// permanent project record). Best-effort: the phone keeps its own copy.
+    func uploadPhoto(sessionID: String, kind: String, jpeg: Data) async throws {
+        var request = URLRequest(url: baseURL.appendingPathComponent("sessions/\(sessionID)/photos"))
+        request.httpMethod = "POST"
+        request.timeoutInterval = 60
+
+        let boundary = "buildpilot-\(UUID().uuidString)"
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+
+        var body = Data()
+        body.append(Data("--\(boundary)\r\n".utf8))
+        body.append(Data("Content-Disposition: form-data; name=\"kind\"\r\n\r\n\(kind)\r\n".utf8))
+        appendPart(&body, boundary: boundary, name: "photo",
+                   fileName: "photo.jpg", contentType: "image/jpeg", data: jpeg)
+        body.append(Data("--\(boundary)--\r\n".utf8))
+        request.httpBody = body
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+            throw UploadError.badStatus(http.statusCode, String(decoding: data, as: UTF8.self))
+        }
+    }
+
     private func appendPart(_ body: inout Data, boundary: String, name: String,
                             fileName: String, contentType: String, data: Data) {
         body.append(Data("--\(boundary)\r\n".utf8))

@@ -5,9 +5,14 @@ import Foundation
 /// directories remain the source of truth.
 struct VisitRecord: Codable, Identifiable {
     let id: String // backend session_id
-    let name: String
+    var name: String
     let date: Date
     let session: SessionResponse
+    // Added for the customer deliverable; optional so records saved by
+    // earlier builds still decode.
+    var photos: [VisitPhoto]?
+    var customerName: String?
+    var customerAddress: String?
 }
 
 @MainActor
@@ -33,6 +38,23 @@ final class VisitHistoryStore: ObservableObject {
 
     func delete(at offsets: IndexSet) {
         records.remove(atOffsets: offsets)
+        save()
+    }
+
+    func record(for visitID: String) -> VisitRecord? {
+        records.first { $0.id == visitID }
+    }
+
+    func addPhoto(_ photo: VisitPhoto, to visitID: String) {
+        guard let index = records.firstIndex(where: { $0.id == visitID }) else { return }
+        records[index].photos = (records[index].photos ?? []) + [photo]
+        save()
+    }
+
+    func setCustomer(name: String, address: String, for visitID: String) {
+        guard let index = records.firstIndex(where: { $0.id == visitID }) else { return }
+        records[index].customerName = name.isEmpty ? nil : name
+        records[index].customerAddress = address.isEmpty ? nil : address
         save()
     }
 

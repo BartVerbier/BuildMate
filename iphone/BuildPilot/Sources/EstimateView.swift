@@ -6,9 +6,18 @@ import SwiftUI
 struct EstimateView: View {
     let session: SessionResponse
     let visitName: String
+    @ObservedObject var history: VisitHistoryStore
     let onDone: (() -> Void)?
 
     @State private var quoteURL: URL?
+    @State private var takingPhotoKind: PhotoKind?
+    @State private var editingCustomer = false
+    @AppStorage("backendURL") private var backendURLString = ""
+
+    private var record: VisitRecord? { history.record(for: session.sessionId) }
+    private var photos: [VisitPhoto] { record?.photos ?? [] }
+    /// Live visit: existing condition. Reopened later: completed result.
+    private var defaultPhotoKind: PhotoKind { onDone != nil ? .before : .after }
 
     var body: some View {
         content
@@ -30,6 +39,8 @@ struct EstimateView: View {
         ScrollView {
             VStack(spacing: 16) {
                 heroCard
+                customerCard
+                photosCard
                 breakdownCard
                 if let m = session.measurements { measurementsCard(m) }
                 if let r = session.requirements { requirementsCards(r) }
@@ -41,6 +52,107 @@ struct EstimateView: View {
             .padding(.bottom, 12)
         }
         .background(Color(.systemGroupedBackground))
+        .sheet(item: $takingPhotoKind) { kind in
+            CameraPicker { image in addPhoto(image, kind: kind) }
+                .ignoresSafeArea()
+        }
+        .sheet(isPresented: $editingCustomer, onDismiss: renderQuote) {
+            CustomerDetailsSheet(
+                name: record?.customerName ?? "",
+                address: record?.customerAddress ?? ""
+            ) { name, address in
+                history.setCustomer(name: name, address: address, for: session.sessionId)
+            }
+        }
+    }
+
+    // MARK: customer & photos
+
+    private var customerCard: some View {
+        Card(title: "Customer") {
+            Button {
+                editingCustomer = true
+            } label: {
+                HStack {
+                    if let name = record?.customerName, !name.isEmpty {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(name).foregroundStyle(.primary)
+                            if let address = record?.customerAddress, !address.isEmpty {
+                                Text(address).font(.footnote).foregroundStyle(.secondary)
+                            }
+                        }
+                    } else {
+                        Text("Add customer details for the quote")
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.footnote)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        }
+    }
+
+    private var photosCard: some View {
+        Card(title: "Photos") {
+            if !photos.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(photos) { photo in
+                            PhotoThumbnail(photo: photo, visitID: session.sessionId)
+                        }
+                    }
+                }
+            }
+            Menu {
+                ForEach(orderedKinds) { kind in
+                    Button {
+                        takingPhotoKind = kind
+                    } label: {
+                        Label("\(kind.label) photo", systemImage: "camera")
+                    }
+                }
+            } label: {
+                Label(
+                    photos.isEmpty ? "Add \(defaultPhotoKind.label) Photos" : "Add Photo",
+                    systemImage: "camera.fill"
+                )
+                .font(.body.weight(.medium))
+                .frame(maxWidth: .infinity, minHeight: 44)
+            } primaryAction: {
+                takingPhotoKind = defaultPhotoKind
+            }
+            .buttonStyle(.bordered)
+        }
+    }
+
+    private var orderedKinds: [PhotoKind] {
+        defaultPhotoKind == .before ? [.before, .progress, .after] : [.after, .progress, .before]
+    }
+
+    private func addPhoto(_ image: UIImage, kind: PhotoKind) {
+        guard let photo = PhotoStore.save(image, visitID: session.sessionId, kind: kind) else { return }
+        history.addPhoto(photo, to: session.sessionId)
+        renderQuote() // quote PDF includes the new photo immediately
+        archivePhoto(photo)
+    }
+
+    /// Best-effort archive to the backend's permanent project record.
+    private func archivePhoto(_ photo: VisitPhoto) {
+        guard let jpeg = PhotoStore.jpegData(photo, visitID: session.sessionId) else { return }
+        let sessionID = session.sessionId
+        let configured = backendURLString
+        Task {
+            guard let url = await BackendLocator.locate(configuredURLString: configured) else { return }
+            do {
+                try await HTTPBackendClient(baseURL: url)
+                    .uploadPhoto(sessionID: sessionID, kind: photo.kind.rawValue, jpeg: jpeg)
+                visitLog.info("Photo archived to backend (\(photo.kind.rawValue))")
+            } catch {
+                visitLog.warning("Photo archive failed (kept on phone): \(error.localizedDescription)")
+            }
+        }
     }
 
     // MARK: sections
@@ -193,7 +305,8 @@ struct EstimateView: View {
         quoteURL = QuotePDF.render(
             session: session,
             visitName: visitName,
-            identity: BusinessIdentity.load()
+            identity: BusinessIdentity.load(),
+            record: record
         )
     }
 }

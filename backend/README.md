@@ -53,6 +53,8 @@ links. It refreshes automatically as visits arrive from the phone.
 - `GET /sessions/{id}` — re-fetch (recovery after a dropped connection)
 - `GET /sessions/{id}/room` — the CapturedRoom JSON, verbatim
 - `GET /sessions/{id}/transcript` — plain-text transcript (404 if none)
+- `POST /sessions/{id}/photos` — archive a visit photo (multipart `photo` +
+  `kind`: before/progress/after) into the session directory
 
 Try it without a phone:
 

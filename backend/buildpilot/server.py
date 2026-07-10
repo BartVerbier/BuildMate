@@ -22,7 +22,7 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, PlainTextResponse
 
 from buildpilot.config import DEFAULT_COMPANY_PROFILE
@@ -35,6 +35,7 @@ from buildpilot.session_store import SessionStore
 
 MAX_ROOM_SCAN_BYTES = 50 * 1024 * 1024
 MAX_AUDIO_BYTES = 500 * 1024 * 1024
+MAX_PHOTO_BYTES = 30 * 1024 * 1024
 
 
 def default_pipeline() -> VisitPipeline:
@@ -108,6 +109,30 @@ def create_app(
             return app.state.store.load_room_scan(session)
         except FileNotFoundError:
             raise HTTPException(404, "Session has no room scan")
+
+    @app.post("/sessions/{session_id}/photos")
+    async def add_photo(
+        session_id: str,
+        photo: UploadFile = File(...),
+        kind: str = Form("before"),
+    ) -> dict:
+        """Archives a visit photo (before/progress/after) into the session
+        directory — part of the permanent project record."""
+        session = _load_or_404(session_id)
+        if kind not in ("before", "progress", "after"):
+            raise HTTPException(400, "kind must be before, progress, or after")
+        data = await photo.read()
+        if len(data) > MAX_PHOTO_BYTES:
+            raise HTTPException(413, "Photo too large")
+        if not data:
+            raise HTTPException(400, "Empty photo")
+
+        photos_dir = app.state.store.session_dir(session.session_id) / "photos"
+        photos_dir.mkdir(exist_ok=True)
+        index = len(list(photos_dir.glob(f"{kind}-*.jpg"))) + 1
+        file_name = f"{kind}-{index:02d}.jpg"
+        (photos_dir / file_name).write_bytes(data)
+        return {"stored": f"photos/{file_name}"}
 
     @app.get("/sessions/{session_id}/transcript", response_class=PlainTextResponse)
     def get_transcript(session_id: str) -> str:
