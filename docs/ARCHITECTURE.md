@@ -85,6 +85,10 @@ The painter reviews every draft; degraded estimates say so explicitly.
 
 ## Deployment Model
 
-V1 runs on an iPhone and a Mac on the same Wi-Fi network. This is
-sufficient to prove the workflow before any production architecture is
-considered.
+V1 development runs on an iPhone and a Mac on the same network. This is a
+**development environment**, not the production architecture (Decision 21):
+production is iPhone → internet → cloud backend. The app already talks only
+to the `BackendClient` interface, and `BackendLocator.productionURL` is the
+single switch that will point it at the cloud; the backend's storage seam
+(`SessionStore`) is where object storage / a database replaces session
+directories in the cloud milestone.

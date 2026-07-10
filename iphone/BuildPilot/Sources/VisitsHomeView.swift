@@ -214,6 +214,6 @@ struct SettingsSheet: View {
             selectedOK = false
             return
         }
-        selectedOK = await VisitController.isReachable(url)
+        selectedOK = await HTTPBackendClient(baseURL: url).isReachable()
     }
 }

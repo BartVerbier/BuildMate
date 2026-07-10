@@ -140,6 +140,29 @@ Three product rules for every customer-facing surface:
    name, painter name, phone, and email are simple app settings rendered
    onto the PDF and text quote. No CRM, no customer database.
 
+## Decision 21 — Transport abstraction: local Mac is dev, cloud is the target (2026-07-10)
+
+The local Mac backend is a **development environment**, not the production
+architecture. Production is: iPhone → internet (Wi-Fi or cellular) → cloud
+backend → AI processing → response.
+
+Seams cut now so the migration is minimal later:
+
+- The app talks only to the `BackendClient` protocol; `HTTPBackendClient`
+  works identically against `http://<mac>:8787` and a future
+  `https://api.<domain>`.
+- `BackendLocator` is the single answer to "which backend?": fixed
+  `productionURL` (when set, the entire phone-side migration) → configured
+  URL → Bonjour discovery. Bonjour is explicitly a development convenience
+  and never part of the production path.
+- Backend: FastAPI is host-agnostic; the local-only pieces are isolated in
+  `__main__.py` (Bonjour advertisement) and `SessionStore` (on-disk session
+  directories — the single seam to swap for object storage / a database in
+  the cloud milestone).
+
+Out of scope until the cloud milestone: authentication, TLS configuration,
+multi-user storage.
+
 ## Rationale
 
 These decisions are intended to reduce complexity and increase the likelihood of building a working prototype quickly. The core value proposition is not the scanning technology itself, but the automation of the site visit and the generation of a useful draft estimate.

@@ -64,7 +64,7 @@ final class VisitController: ObservableObject {
 
         phase = .connecting
         visitLog.info("Start visit: locating backend (configured: \(!self.backendURLString.isEmpty))")
-        guard let backendURL = await locateBackend() else {
+        guard let backendURL = await locateAndRememberBackend() else {
             visitLog.error("Start visit aborted: no backend found")
             phase = .failed(
                 message: "Couldn't find your Mac on this Wi-Fi.\n\nMake sure the Mac is awake, on the same network, and running Build Pilot. Then try again — or pick your Mac in Settings (the gear on the Visits screen).",
@@ -72,7 +72,7 @@ final class VisitController: ObservableObject {
             )
             return
         }
-        guard await Self.isReachable(backendURL) else {
+        guard await HTTPBackendClient(baseURL: backendURL).isReachable() else {
             visitLog.error("Start visit aborted: \(backendURL.absoluteString) not answering /health")
             phase = .failed(
                 message: "Your Mac was found but isn't answering.\n\nCheck that Build Pilot is running on it, then try again.",
@@ -152,36 +152,29 @@ final class VisitController: ObservableObject {
 
     // MARK: - backend
 
-    /// Returns the configured backend if set; otherwise discovers one on the
-    /// network (zero-config first run) and remembers it.
-    private func locateBackend() async -> URL? {
-        if let url = URL(string: backendURLString), !backendURLString.isEmpty {
-            return url
+    /// Resolves the backend via BackendLocator (production URL → configured
+    /// URL → local discovery) and remembers a discovered one in Settings.
+    private func locateAndRememberBackend() async -> URL? {
+        guard let url = await BackendLocator.locate(configuredURLString: backendURLString) else {
+            return nil
         }
-        if let discovered = await BackendDiscovery.quickFind() {
-            backendURLString = discovered.absoluteString
-            return discovered
+        if backendURLString.isEmpty {
+            backendURLString = url.absoluteString
         }
-        return nil
-    }
-
-    static func isReachable(_ backendURL: URL) async -> Bool {
-        var request = URLRequest(url: backendURL.appendingPathComponent("health"))
-        request.timeoutInterval = 3
-        guard let (_, response) = try? await URLSession.shared.data(for: request) else { return false }
-        return (response as? HTTPURLResponse)?.statusCode == 200
+        return url
     }
 
     private func uploadPendingBundle() async {
-        guard let bundle = pendingBundle, let url = URL(string: backendURLString) else {
+        guard let bundle = pendingBundle,
+              let url = await BackendLocator.locate(configuredURLString: backendURLString) else {
             phase = .failed(message: "No Mac is configured. Pick your Mac in Settings and try again.", canRetry: false)
             return
         }
         phase = .processing(.drafting)
         let uploadStarted = Date()
         do {
-            let session = try await SessionUploader(backendURL: url)
-                .upload(roomScan: bundle.roomJSON, audioFile: bundle.audioFile)
+            let session = try await HTTPBackendClient(baseURL: url)
+                .submitVisit(roomScan: bundle.roomJSON, audioFile: bundle.audioFile)
             visitLog.info("Upload + pipeline finished in \(Date().timeIntervalSince(uploadStarted), format: .fixed(precision: 1))s → \(session.status) (\(session.sessionId))")
             if session.status == "completed" {
                 pendingBundle = nil

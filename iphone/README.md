@@ -59,7 +59,7 @@ listed. Manual address entry exists as a fallback under Settings → Advanced.
 - `Sources/VisitHistory.swift` — on-device recent-visit store
 - `Sources/RoomCaptureController.swift` — RoomPlan session + CapturedRoom JSON export
 - `Sources/AudioRecorder.swift` — AVFoundation m4a recording
-- `Sources/SessionUploader.swift` — multipart upload to the Mac
+- `Sources/BackendClient.swift` — BackendClient protocol + HTTP implementation + BackendLocator (the one-line cloud switch)
 - `Sources/ContentView.swift` — root + visit flow presentation
 - `Sources/VisitsHomeView.swift`, `CaptureVisitView.swift`,
   `ProcessingView.swift`, `EstimateView.swift` — the four screens
