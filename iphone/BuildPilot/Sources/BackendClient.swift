@@ -32,8 +32,15 @@ struct HTTPBackendClient: BackendClient {
     func isReachable() async -> Bool {
         var request = URLRequest(url: baseURL.appendingPathComponent("health"))
         request.timeoutInterval = 3
-        guard let (_, response) = try? await URLSession.shared.data(for: request) else { return false }
-        return (response as? HTTPURLResponse)?.statusCode == 200
+        do {
+            let (_, response) = try await URLSession.shared.data(for: request)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+            visitLog.info("HTTP health \(baseURL.absoluteString) → \(status)")
+            return status == 200
+        } catch {
+            visitLog.error("HTTP health \(baseURL.absoluteString) failed: \(error.localizedDescription)")
+            return false
+        }
     }
 
     func submitVisit(roomScan: Data, audioFile: URL?) async throws -> SessionResponse {

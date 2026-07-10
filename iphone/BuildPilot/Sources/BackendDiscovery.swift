@@ -63,7 +63,14 @@ final class BackendDiscovery: ObservableObject {
     /// connection and reading the remote host/port from the established path.
     static func resolve(_ mac: DiscoveredMac) async -> URL? {
         await withCheckedContinuation { continuation in
-            let connection = NWConnection(to: mac.endpoint, using: .tcp)
+            // Force IPv4: the backend listens on IPv4 (uvicorn 0.0.0.0).
+            // Left to its own devices, Network.framework tries IPv6 first,
+            // bounces off the v4-only listener, and stalls in .waiting.
+            let parameters = NWParameters.tcp
+            if let ip = parameters.defaultProtocolStack.internetProtocol as? NWProtocolIP.Options {
+                ip.version = .v4
+            }
+            let connection = NWConnection(to: mac.endpoint, using: parameters)
             var resumed = false
             let finish: (URL?) -> Void = { url in
                 guard !resumed else { return }
@@ -83,11 +90,10 @@ final class BackendDiscovery: ObservableObject {
                     visitLog.info("Resolved \(mac.id) → \(url?.absoluteString ?? "nil")")
                     finish(url)
                 case .waiting(let error):
-                    // Fail fast: .waiting means the service resolved but the
-                    // connection can't establish (e.g. stale advertisement
-                    // pointing at a dead port). Don't sit out the timeout.
-                    visitLog.error("Resolve \(mac.id): waiting — \(error.localizedDescription)")
-                    finish(nil)
+                    // NOT fatal: .waiting also occurs transiently between
+                    // connection candidates (e.g. v6→v4 fallback). Log and
+                    // let the 4s timeout below be the backstop.
+                    visitLog.warning("Resolve \(mac.id): waiting — \(error.localizedDescription)")
                 case .failed(let error):
                     visitLog.error("Resolve \(mac.id): failed — \(error.localizedDescription)")
                     finish(nil)
