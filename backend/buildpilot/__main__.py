@@ -27,6 +27,28 @@ import uvicorn
 logger = logging.getLogger("buildpilot")
 
 
+def load_env_file() -> list[str]:
+    """Loads backend/.env (KEY=VALUE lines) into the environment if present.
+
+    Keeps API keys out of shell profiles and the repo (.env is gitignored).
+    Existing environment variables always win. No dependency needed.
+    """
+    env_path = Path(__file__).resolve().parents[1] / ".env"
+    loaded: list[str] = []
+    if not env_path.exists():
+        return loaded
+    for line in env_path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key, value = key.strip(), value.strip().strip("'\"")
+        if key and value and key not in os.environ:
+            os.environ[key] = value
+            loaded.append(key)
+    return loaded
+
+
 def sessions_root() -> Path:
     configured = os.environ.get("BUILDPILOT_SESSIONS_DIR")
     if configured:
@@ -84,8 +106,11 @@ def main() -> None:
     parser.add_argument("--no-warmup", action="store_true", help="skip Whisper warm-up")
     args = parser.parse_args()
 
+    loaded_keys = load_env_file()
     log_file = configure_logging()
     logger.info("Console: http://localhost:%d/  ·  Log file: %s", args.port, log_file)
+    if loaded_keys:
+        logger.info("Loaded from backend/.env: %s", ", ".join(loaded_keys))
 
     bonjour = advertise(args.port)
     if bonjour:
@@ -97,6 +122,10 @@ def main() -> None:
     if not os.environ.get("ANTHROPIC_API_KEY") and not os.environ.get("ANTHROPIC_AUTH_TOKEN"):
         logger.warning(
             "No ANTHROPIC_API_KEY set — requirements extraction will degrade to the default paint scope."
+        )
+    if not os.environ.get("GEMINI_API_KEY"):
+        logger.warning(
+            "No GEMINI_API_KEY set — the proposed-result visualization will be unavailable."
         )
 
     try:

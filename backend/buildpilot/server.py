@@ -144,6 +144,14 @@ def create_app(
         session = _load_or_404(session_id)
         if session.requirements is None:
             raise HTTPException(409, "Session has no extracted requirements yet")
+        # Agreement rule: the visualization must always match the estimate.
+        # Degraded requirements are defaults, not the customer's words —
+        # refuse to render rather than show a result nobody asked for.
+        if not session.requirements.transcript_available:
+            raise HTTPException(
+                409, "Requirements were not extracted from the conversation; "
+                     "refusing to render a visualization from default assumptions"
+            )
 
         photos_dir = app.state.store.session_dir(session.session_id) / "photos"
         before_photos = sorted(photos_dir.glob("before-*.jpg")) if photos_dir.exists() else []

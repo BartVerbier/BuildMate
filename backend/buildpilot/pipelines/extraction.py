@@ -11,8 +11,12 @@ note in the estimate — the painter reviews everything anyway.
 
 from __future__ import annotations
 
+import logging
 import os
+import time
 from typing import List
+
+logger = logging.getLogger(__name__)
 
 from pydantic import BaseModel, Field
 
@@ -89,6 +93,10 @@ class ClaudeRequirementsExtractor:
         except ImportError as exc:
             raise ExtractionError("anthropic SDK is not installed") from exc
 
+        logger.info(
+            "Extraction request: model=%s, transcript=%d chars", self.model, len(transcript)
+        )
+        started = time.perf_counter()
         try:
             client = anthropic.Anthropic()
             response = client.messages.parse(
@@ -111,6 +119,17 @@ class ClaudeRequirementsExtractor:
             raise ExtractionError("no Anthropic credentials configured") from exc
 
         extracted: _LlmExtraction = response.parsed_output
+        logger.info(
+            "Extraction response in %.1fs: scope=%d, exclusions=%d, prep=%d, notes=%d, "
+            "paint walls=%s ceiling=%s",
+            time.perf_counter() - started,
+            len(extracted.scope_of_work),
+            len(extracted.exclusions),
+            len(extracted.preparation_required),
+            len(extracted.special_notes),
+            extracted.paint_scope.walls,
+            extracted.paint_scope.ceiling,
+        )
         return RequirementExtraction(
             scope_of_work=extracted.scope_of_work,
             exclusions=extracted.exclusions,

@@ -37,6 +37,10 @@ enum QuotePDF {
         let fileName = "Quote — \(visitName.replacingOccurrences(of: "/", with: "-")).pdf"
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
 
+        let beforeCount = photos.filter { $0.kind == .before }.count
+        let vizCount = photos.filter { $0.kind == .visualization }.count
+        visitLog.info("Quote PDF: \(pages.count) pages — before photos: \(beforeCount), visualizations: \(vizCount), after: \(photos.filter { $0.kind == .after }.count)")
+
         var mediaBox = CGRect(x: 0, y: 0, width: pageWidth, height: pageHeight)
         guard let context = CGContext(url as CFURL, mediaBox: &mediaBox, nil) else { return nil }
         for page in pages {

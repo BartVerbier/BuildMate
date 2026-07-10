@@ -12,9 +12,13 @@ beauty — the customer must recognize their own room.
 from __future__ import annotations
 
 import base64
+import logging
 import os
+import time
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 from buildpilot.models.session import RequirementExtraction
 
@@ -71,11 +75,17 @@ class GeminiVisualizer:
         if not api_key:
             raise VisualizationError("no GEMINI_API_KEY configured")
 
+        instruction = build_instruction(requirements)
+        logger.info(
+            "Visualization request: model=%s, photo=%d kB, instruction=%d chars",
+            self.model, len(photo_jpeg) // 1024, len(instruction),
+        )
+        started = time.perf_counter()
         body = {
             "contents": [
                 {
                     "parts": [
-                        {"text": build_instruction(requirements)},
+                        {"text": instruction},
                         {
                             "inline_data": {
                                 "mime_type": "image/jpeg",
@@ -102,7 +112,12 @@ class GeminiVisualizer:
                 for part in candidate.get("content", {}).get("parts", []):
                     inline = part.get("inline_data") or part.get("inlineData")
                     if inline and inline.get("data"):
-                        return base64.b64decode(inline["data"])
+                        image = base64.b64decode(inline["data"])
+                        logger.info(
+                            "Visualization response in %.1fs: %d kB image",
+                            time.perf_counter() - started, len(image) // 1024,
+                        )
+                        return image
         except (ValueError, KeyError, TypeError) as exc:
             raise VisualizationError(f"unexpected image model response: {exc}") from exc
         raise VisualizationError("image model returned no image")

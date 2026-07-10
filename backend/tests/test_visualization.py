@@ -66,6 +66,18 @@ def test_visualize_renders_and_archives(tmp_path):
     assert (store.session_dir(session_id) / "photos" / "visualization-01.jpg").exists()
 
 
+def test_visualize_refuses_degraded_requirements(tmp_path):
+    """Estimate and visualization must agree: no render from default scope."""
+    from tests.test_server_e2e import FailingExtractor, make_client as make_e2e_client
+
+    client, _ = make_e2e_client(tmp_path, extractor=FailingExtractor())
+    session_id = upload(client).json()["session_id"]
+    archive_before_photo(client, session_id)
+    response = client.post(f"/sessions/{session_id}/visualize")
+    assert response.status_code == 409
+    assert "refusing" in response.json()["detail"]
+
+
 def test_visualize_requires_before_photo(tmp_path):
     client, _ = make_client(tmp_path, FakeVisualizer())
     session_id = upload(client).json()["session_id"]

@@ -129,7 +129,7 @@ struct EstimateView: View {
     }
 
     private var photosCard: some View {
-        Card(title: "Photos") {
+        Card(title: "Current Room") {
             if !photos.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 10) {

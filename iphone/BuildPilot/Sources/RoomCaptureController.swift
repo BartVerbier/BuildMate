@@ -64,10 +64,12 @@ final class RoomCaptureController: NSObject, ObservableObject {
     /// The sharpest frames captured during the scan, ready to be saved as
     /// the visit's Before photos. Call after stop().
     func bestBeforePhotos() -> [UIImage] {
-        frameCandidates
+        let selected = frameCandidates
             .sorted { $0.score > $1.score }
             .prefix(Self.maxKeptFrames)
-            .compactMap { UIImage(data: $0.jpeg) }
+        let allScores = frameCandidates.map { $0.score / 1024 }.sorted(by: >)
+        visitLog.info("Before-photo selection: \(self.frameCandidates.count) candidates, scores(kB)=\(allScores), selected top \(selected.count)")
+        return selected.compactMap { UIImage(data: $0.jpeg) }
     }
 
     private func sampleFrame() {
