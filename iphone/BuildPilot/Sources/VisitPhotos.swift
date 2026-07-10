@@ -7,14 +7,19 @@ import UIKit
 /// the backend session directory as the permanent project record.
 enum PhotoKind: String, Codable, CaseIterable, Identifiable {
     case before, progress, after
+    case visualization // AI "proposed result" render — never captured by camera
 
     var id: String { rawValue }
+
+    /// Kinds the painter can capture manually.
+    static var cameraKinds: [PhotoKind] { [.before, .progress, .after] }
 
     var label: String {
         switch self {
         case .before: return "Before"
         case .progress: return "Progress"
         case .after: return "After"
+        case .visualization: return "Proposed"
         }
     }
 }

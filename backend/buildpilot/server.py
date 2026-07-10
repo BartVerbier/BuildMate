@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 
 from buildpilot.config import DEFAULT_COMPANY_PROFILE
 from buildpilot.pipeline import VisitPipeline
@@ -31,6 +31,7 @@ from buildpilot.pipelines.estimator import DeterministicEstimator
 from buildpilot.pipelines.extraction import ClaudeRequirementsExtractor
 from buildpilot.pipelines.measurement import RoomPlanMeasurementEngine
 from buildpilot.pipelines.transcription import MlxWhisperTranscriber
+from buildpilot.pipelines.visualization import GeminiVisualizer, VisualizationError
 from buildpilot.session_store import SessionStore
 
 MAX_ROOM_SCAN_BYTES = 50 * 1024 * 1024
@@ -58,10 +59,12 @@ def default_store() -> SessionStore:
 def create_app(
     pipeline: Optional[VisitPipeline] = None,
     store: Optional[SessionStore] = None,
+    visualizer=None,
 ) -> FastAPI:
     app = FastAPI(title="Build Pilot backend", version="0.1.0")
     app.state.pipeline = pipeline or default_pipeline()
     app.state.store = store or default_store()
+    app.state.visualizer = visualizer or GeminiVisualizer()
 
     @app.get("/health")
     def health() -> dict:
@@ -133,6 +136,30 @@ def create_app(
         file_name = f"{kind}-{index:02d}.jpg"
         (photos_dir / file_name).write_bytes(data)
         return {"stored": f"photos/{file_name}"}
+
+    @app.post("/sessions/{session_id}/visualize")
+    def visualize(session_id: str) -> Response:
+        """Renders the AI "proposed result" from the newest archived Before
+        photo + the extracted requirements. Returns image/jpeg."""
+        session = _load_or_404(session_id)
+        if session.requirements is None:
+            raise HTTPException(409, "Session has no extracted requirements yet")
+
+        photos_dir = app.state.store.session_dir(session.session_id) / "photos"
+        before_photos = sorted(photos_dir.glob("before-*.jpg")) if photos_dir.exists() else []
+        if not before_photos:
+            raise HTTPException(409, "No Before photo archived for this session")
+
+        try:
+            image = app.state.visualizer.render(
+                before_photos[-1].read_bytes(), session.requirements
+            )
+        except VisualizationError as exc:
+            raise HTTPException(503, f"Visualization unavailable: {exc}")
+
+        index = len(list(photos_dir.glob("visualization-*.jpg"))) + 1
+        (photos_dir / f"visualization-{index:02d}.jpg").write_bytes(image)
+        return Response(content=image, media_type="image/jpeg")
 
     @app.get("/sessions/{session_id}/transcript", response_class=PlainTextResponse)
     def get_transcript(session_id: str) -> str:

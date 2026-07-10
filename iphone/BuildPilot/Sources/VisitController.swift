@@ -39,6 +39,8 @@ final class VisitController: ObservableObject {
     /// True once the painter has done the scope read-back with the customer
     /// and moved on to the price. Reset for every new visit.
     @Published var readbackConfirmed = false
+    /// True while the AI "proposed result" render is being generated.
+    @Published var visualizationPending = false
     @AppStorage("backendURL") var backendURLString = ""
 
     let roomCapture = RoomCaptureController()
@@ -180,6 +182,7 @@ final class VisitController: ObservableObject {
                 pendingBundle = nil
                 history.add(name: visitName, session: session)
                 phase = .done(session)
+                finalizeVisitMedia(sessionID: session.sessionId, backendURL: url)
             } else {
                 pendingBundle = nil // the Mac rejected the scan; retrying won't help
                 phase = .failed(
@@ -190,6 +193,54 @@ final class VisitController: ObservableObject {
         } catch {
             visitLog.error("Upload failed after \(Date().timeIntervalSince(uploadStarted), format: .fixed(precision: 1))s: \(error.localizedDescription)")
             phase = .failed(message: Self.friendlyUploadError(error), canRetry: true)
+        }
+    }
+
+    // MARK: - automatic visit media (Before photos + proposed-result render)
+
+    /// After a successful visit: save the sharpest scan frames as Before
+    /// photos, archive them, then request the AI visualization. All
+    /// best-effort and in the background — the estimate is never delayed.
+    private func finalizeVisitMedia(sessionID: String, backendURL: URL) {
+        let frames = roomCapture.bestBeforePhotos()
+        visitLog.info("Auto-captured \(frames.count) Before photos from the scan")
+
+        var savedPhotos: [VisitPhoto] = []
+        for image in frames {
+            if let photo = PhotoStore.save(image, visitID: sessionID, kind: .before) {
+                history.addPhoto(photo, to: sessionID)
+                savedPhotos.append(photo)
+            }
+        }
+
+        visualizationPending = true
+        Task { [weak self] in
+            let client = HTTPBackendClient(baseURL: backendURL)
+            // 1. Archive the Before photos (the render needs one server-side).
+            for photo in savedPhotos {
+                guard let jpeg = PhotoStore.jpegData(photo, visitID: sessionID) else { continue }
+                do {
+                    try await client.uploadPhoto(sessionID: sessionID, kind: "before", jpeg: jpeg)
+                } catch {
+                    visitLog.warning("Before-photo archive failed: \(error.localizedDescription)")
+                }
+            }
+            // 2. Request the proposed-result render.
+            do {
+                let jpeg = try await client.requestVisualization(sessionID: sessionID)
+                await MainActor.run {
+                    guard let self else { return }
+                    if let image = UIImage(data: jpeg),
+                       let photo = PhotoStore.save(image, visitID: sessionID, kind: .visualization) {
+                        self.history.addPhoto(photo, to: sessionID)
+                        visitLog.info("Visualization saved (\(jpeg.count / 1024) kB)")
+                    }
+                    self.visualizationPending = false
+                }
+            } catch {
+                visitLog.warning("Visualization unavailable: \(error.localizedDescription)")
+                await MainActor.run { self?.visualizationPending = false }
+            }
         }
     }
 

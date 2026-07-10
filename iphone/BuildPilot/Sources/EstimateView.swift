@@ -7,6 +7,7 @@ struct EstimateView: View {
     let session: SessionResponse
     let visitName: String
     @ObservedObject var history: VisitHistoryStore
+    var visualizationPending: Bool = false
     let onDone: (() -> Void)?
 
     @State private var quoteURL: URL?
@@ -15,7 +16,10 @@ struct EstimateView: View {
     @AppStorage("backendURL") private var backendURLString = ""
 
     private var record: VisitRecord? { history.record(for: session.sessionId) }
-    private var photos: [VisitPhoto] { record?.photos ?? [] }
+    private var allPhotos: [VisitPhoto] { record?.photos ?? [] }
+    /// Camera photos only — the AI visualization has its own card.
+    private var photos: [VisitPhoto] { allPhotos.filter { $0.kind != .visualization } }
+    private var visualization: VisitPhoto? { allPhotos.last { $0.kind == .visualization } }
     /// Live visit: existing condition. Reopened later: completed result.
     private var defaultPhotoKind: PhotoKind { onDone != nil ? .before : .after }
 
@@ -39,6 +43,7 @@ struct EstimateView: View {
         ScrollView {
             VStack(spacing: 16) {
                 heroCard
+                proposedResultCard
                 customerCard
                 photosCard
                 breakdownCard
@@ -62,6 +67,35 @@ struct EstimateView: View {
                 address: record?.customerAddress ?? ""
             ) { name, address in
                 history.setCustomer(name: name, address: address, for: session.sessionId)
+            }
+        }
+    }
+
+    // MARK: proposed result
+
+    @ViewBuilder
+    private var proposedResultCard: some View {
+        if let visualization, let image = PhotoStore.load(visualization, visitID: session.sessionId) {
+            Card(title: "Proposed Result") {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                Text("AI visualization based on your room — final result may vary slightly.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .onAppear { renderQuote() } // ensure the PDF includes it
+        } else if visualizationPending {
+            Card(title: "Proposed Result") {
+                HStack(spacing: 12) {
+                    ProgressView()
+                    Text("Creating a visualization of the finished room…")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, minHeight: 44)
             }
         }
     }
@@ -106,7 +140,7 @@ struct EstimateView: View {
                 }
             }
             Menu {
-                ForEach(orderedKinds) { kind in
+                ForEach(orderedCameraKinds) { kind in
                     Button {
                         takingPhotoKind = kind
                     } label: {
@@ -127,7 +161,7 @@ struct EstimateView: View {
         }
     }
 
-    private var orderedKinds: [PhotoKind] {
+    private var orderedCameraKinds: [PhotoKind] {
         defaultPhotoKind == .before ? [.before, .progress, .after] : [.after, .progress, .before]
     }
 

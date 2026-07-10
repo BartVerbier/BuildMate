@@ -17,14 +17,20 @@ enum QuotePDF {
         identity: BusinessIdentity,
         record: VisitRecord?
     ) -> URL? {
-        var pages: [AnyView] = [
-            AnyView(SummaryPage(session: session, visitName: visitName, identity: identity, record: record)),
-            AnyView(DetailPage(session: session, identity: identity)),
-        ]
+        // Presentation order: cover → Current Room → Proposed Result →
+        // Scope of Work → Price Breakdown (→ Completed Result, post-job).
         let photos = record?.photos ?? []
         let visitID = session.sessionId
-        pages += photoPages(title: "Existing Condition",
+        var pages: [AnyView] = [
+            AnyView(SummaryPage(session: session, visitName: visitName, identity: identity, record: record))
+        ]
+        pages += photoPages(title: "Current Room",
                             photos: photos.filter { $0.kind == .before }, visitID: visitID)
+        pages += photoPages(title: "Proposed Result",
+                            photos: photos.filter { $0.kind == .visualization }, visitID: visitID,
+                            caption: "AI visualization generated from a photo of this room, showing only the requested finishes. Final result may vary slightly.")
+        pages.append(AnyView(DetailPage(session: session, identity: identity)))
+        pages.append(AnyView(PricePage(session: session, identity: identity)))
         pages += photoPages(title: "Completed Result",
                             photos: photos.filter { $0.kind == .after }, visitID: visitID)
 
@@ -48,14 +54,17 @@ enum QuotePDF {
         return url
     }
 
-    private static func photoPages(title: String, photos: [VisitPhoto], visitID: String) -> [AnyView] {
+    private static func photoPages(
+        title: String, photos: [VisitPhoto], visitID: String, caption: String? = nil
+    ) -> [AnyView] {
         guard !photos.isEmpty else { return [] }
         return stride(from: 0, to: photos.count, by: 4).map { start in
             AnyView(PhotoPage(
                 title: title,
                 photos: Array(photos[start ..< min(start + 4, photos.count)]),
                 visitID: visitID,
-                continued: start > 0
+                continued: start > 0,
+                caption: start == 0 ? caption : nil
             ))
         }
     }
@@ -203,21 +212,15 @@ private struct SummaryPage: View {
                 }
                 .padding(.vertical, 14)
                 Divide()
-
-                SectionTitle("Summary")
-                Line("Labour (\(Format.hours(e.labourHours)))", Format.euro(e.labourCostEur))
-                Line("Materials", Format.euro(e.materialCostEur))
-                Line("Paint required", Format.litres(e.paintQuantityLitres))
-                Line("Primer required", Format.litres(e.primerQuantityLitres))
-                Text("The total also covers travel and overheads.")
-                    .font(.system(size: 10))
+                Text("The following pages show your room today, the proposed result, the full scope of work, and the price breakdown.")
+                    .font(.system(size: 11))
                     .foregroundStyle(.secondary)
-                    .padding(.top, 6)
+                    .padding(.top, 12)
             }
 
             Spacer(minLength: 0)
             Divide()
-            Text("Draft quotation — advisory and subject to final confirmation. Detailed scope, measurements, and terms on the following pages.")
+            Text("Draft quotation — advisory and subject to final confirmation.")
                 .font(.system(size: 9))
                 .foregroundStyle(.secondary)
                 .padding(.top, 8)
@@ -239,7 +242,7 @@ private struct DetailPage: View {
 
     var body: some View {
         PageChrome {
-            Text("Details")
+            Text("Scope of Work")
                 .font(.system(size: 18, weight: .bold))
                 .padding(.bottom, 6)
             Divide()
@@ -269,13 +272,7 @@ private struct DetailPage: View {
                 }
             }
 
-            Spacer(minLength: 12)
-
-            SectionTitle("Terms & Conditions")
-            Text(identity.terms)
-                .font(.system(size: 9.5))
-                .foregroundStyle(.secondary)
-                .lineLimit(8)
+            Spacer(minLength: 0)
         }
     }
 
@@ -296,6 +293,55 @@ private struct DetailPage: View {
     }
 }
 
+// MARK: - price breakdown page
+
+private struct PricePage: View {
+    let session: SessionResponse
+    let identity: BusinessIdentity
+
+    var body: some View {
+        PageChrome {
+            Text("Price Breakdown")
+                .font(.system(size: 18, weight: .bold))
+                .padding(.bottom, 6)
+            Divide()
+
+            if let e = session.estimate {
+                SectionTitle("Breakdown")
+                Line("Labour (\(Format.hours(e.labourHours)))", Format.euro(e.labourCostEur))
+                Line("Materials", Format.euro(e.materialCostEur))
+                Line("Paint required", Format.litres(e.paintQuantityLitres))
+                Line("Primer required", Format.litres(e.primerQuantityLitres))
+                Text("The total also covers travel and overheads.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 4)
+
+                SectionTitle("Total")
+                if let rate = session.companyProfile?.vatRate, rate > 0 {
+                    let vat = e.suggestedQuotationEur - e.suggestedQuotationEur / (1 + rate)
+                    Line("VAT (\(Int((rate * 100).rounded())) %)", Format.euro(vat))
+                }
+                HStack {
+                    Text("Total (incl. VAT)").font(.system(size: 14, weight: .semibold))
+                    Spacer()
+                    Text(Format.euro(e.suggestedQuotationEur))
+                        .font(.system(size: 20, weight: .bold, design: .rounded))
+                }
+                .padding(.vertical, 6)
+            }
+
+            Spacer(minLength: 12)
+
+            SectionTitle("Terms & Conditions")
+            Text(identity.terms)
+                .font(.system(size: 9.5))
+                .foregroundStyle(.secondary)
+                .lineLimit(10)
+        }
+    }
+}
+
 // MARK: - photo pages
 
 private struct PhotoPage: View {
@@ -303,6 +349,7 @@ private struct PhotoPage: View {
     let photos: [VisitPhoto]
     let visitID: String
     let continued: Bool
+    var caption: String?
 
     private let cell = CGSize(width: 240, height: 300)
 
@@ -312,6 +359,12 @@ private struct PhotoPage: View {
                 .font(.system(size: 18, weight: .bold))
                 .padding(.bottom, 6)
             Divide()
+            if let caption {
+                Text(caption)
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 6)
+            }
 
             LazyVGrid(
                 columns: [GridItem(.fixed(cell.width), spacing: 16), GridItem(.fixed(cell.width))],

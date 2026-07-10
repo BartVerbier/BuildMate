@@ -12,6 +12,7 @@ zero API cost.
 | Variable | Used by | Notes |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | Requirements extractor | Optional — without it the pipeline degrades to the default paint scope and notes it on the estimate. Get a key at console.anthropic.com. |
+| `GEMINI_API_KEY` | Proposed-result visualization | Optional — without it the visualization card and PDF section are simply omitted. Get a key at aistudio.google.com. ~$0.04 per rendered image. |
 
 Set it in the shell that runs the backend:
 

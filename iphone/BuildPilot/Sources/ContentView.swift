@@ -36,7 +36,12 @@ struct ContentView: View {
             ProcessingView(stage: stage)
         case .done(let session):
             if visit.readbackConfirmed {
-                EstimateView(session: session, visitName: visit.visitName, history: visit.history) {
+                EstimateView(
+                    session: session,
+                    visitName: visit.visitName,
+                    history: visit.history,
+                    visualizationPending: visit.visualizationPending
+                ) {
                     visit.reset()
                 }
             } else {

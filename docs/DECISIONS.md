@@ -180,6 +180,35 @@ extraction, measurements, estimate, quote PDF, and photos.
   Terms & Conditions); then "Existing Condition" (before photos) and
   "Completed Result" (after photos, omitted when none), four per page.
 
+## Decision 23 — Automatic Before photos and the AI visualization (2026-07-10)
+
+**Automatic Before photos.** RoomPlan exposes its underlying ARSession;
+during every scan the app polls `arSession.currentFrame` every 2.5s (never
+touching RoomPlan's delegate), JPEG-encodes samples, and keeps the three
+sharpest (JPEG size at fixed quality as the sharpness proxy). They are
+saved as the visit's Before photos and archived to the backend — the
+painter never has to remember photos. Full-quality manual capture remains
+for After photos (no scan on the return visit).
+
+**AI visualization ("Proposed Result").** After the estimate exists, the
+backend renders the finished room from the newest archived Before photo +
+the typed requirements via a hosted instruction-based image-editing model
+(Gemini 2.5 Flash Image, `GEMINI_API_KEY`, adapter in
+`pipelines/visualization.py`). The edit instruction is built
+deterministically from RequirementExtraction with strict preserve-the-room
+rules. This amends Decision 12: AI is allowed for transcription,
+extraction, and *presentation* (visualization) — measurements and the
+estimate remain deterministic and are never influenced by the image model.
+Degradation: no key → the endpoint answers 503, the phone hides the card,
+the PDF omits the section. Local generation (on-device or Mac diffusion)
+was rejected: slower, heavier, and far less reliable at
+structure-preserving edits than hosted image-edit models.
+
+The quote PDF is now a presentation: cover with price → Current Room
+(auto Before photos) → Proposed Result (AI render, clearly captioned as a
+visualization) → Scope of Work → Price Breakdown with VAT and Terms
+(→ Completed Result after the job).
+
 ## Rationale
 
 These decisions are intended to reduce complexity and increase the likelihood of building a working prototype quickly. The core value proposition is not the scanning technology itself, but the automation of the site visit and the generation of a useful draft estimate.

@@ -1,3 +1,5 @@
+import ARKit
+import CoreImage
 import Foundation
 import RoomPlan
 import UIKit
@@ -17,6 +19,20 @@ final class RoomCaptureController: NSObject, ObservableObject {
     /// or an error if processing failed.
     var onFinalResult: ((Result<Data, Error>) -> Void)?
 
+    // MARK: automatic Before photos
+    //
+    // RoomPlan owns the camera, but its ARSession exposes live frames.
+    // We *poll* currentFrame on a timer (never touching RoomPlan's session
+    // delegate), JPEG-encode a sample every few seconds, and keep the
+    // sharpest few — JPEG size at fixed quality is a cheap, reliable proxy
+    // for image detail/sharpness.
+    private static let frameSampleInterval: TimeInterval = 2.5
+    private static let maxKeptFrames = 3
+    private static let ciContext = CIContext()
+
+    private var frameTimer: Timer?
+    private var frameCandidates: [(score: Int, jpeg: Data)] = []
+
     override init() {
         captureView = RoomCaptureView(frame: .zero)
         super.init()
@@ -26,15 +42,51 @@ final class RoomCaptureController: NSObject, ObservableObject {
     func start() {
         guard !isScanning else { return }
         isScanning = true
+        frameCandidates = []
         captureView.captureSession.run(configuration: RoomCaptureSession.Configuration())
+        frameTimer = Timer.scheduledTimer(
+            withTimeInterval: Self.frameSampleInterval, repeats: true
+        ) { [weak self] _ in
+            self?.sampleFrame()
+        }
     }
 
     func stop() {
         guard isScanning else { return }
         isScanning = false
+        frameTimer?.invalidate()
+        frameTimer = nil
         // Stopping triggers RoomPlan's final processing pass; the result
         // arrives via captureView(didPresent:error:).
         captureView.captureSession.stop()
+    }
+
+    /// The sharpest frames captured during the scan, ready to be saved as
+    /// the visit's Before photos. Call after stop().
+    func bestBeforePhotos() -> [UIImage] {
+        frameCandidates
+            .sorted { $0.score > $1.score }
+            .prefix(Self.maxKeptFrames)
+            .compactMap { UIImage(data: $0.jpeg) }
+    }
+
+    private func sampleFrame() {
+        guard isScanning,
+              let frame = captureView.captureSession.arSession.currentFrame
+        else { return }
+        let ciImage = CIImage(cvPixelBuffer: frame.capturedImage)
+        guard let cgImage = Self.ciContext.createCGImage(ciImage, from: ciImage.extent) else { return }
+        // Sensor frames are landscape; rotate to the portrait the painter saw.
+        let image = UIImage(cgImage: cgImage, scale: 1, orientation: .right)
+        guard let jpeg = image.jpegData(compressionQuality: 0.8) else { return }
+
+        frameCandidates.append((score: jpeg.count, jpeg: jpeg))
+        // Bound memory: keep only the best dozen candidates while scanning.
+        if frameCandidates.count > 12 {
+            frameCandidates.sort { $0.score > $1.score }
+            frameCandidates.removeLast(frameCandidates.count - 12)
+        }
+        visitLog.debug("Sampled scan frame (\(jpeg.count / 1024) kB), candidates: \(self.frameCandidates.count)")
     }
 }
 

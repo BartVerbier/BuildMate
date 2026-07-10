@@ -55,6 +55,9 @@ links. It refreshes automatically as visits arrive from the phone.
 - `GET /sessions/{id}/transcript` — plain-text transcript (404 if none)
 - `POST /sessions/{id}/photos` — archive a visit photo (multipart `photo` +
   `kind`: before/progress/after) into the session directory
+- `POST /sessions/{id}/visualize` — render the AI "proposed result" from the
+  newest Before photo + extracted requirements (returns image/jpeg; needs
+  `GEMINI_API_KEY`, otherwise 503)
 
 Try it without a phone:
 

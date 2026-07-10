@@ -73,6 +73,20 @@ struct HTTPBackendClient: BackendClient {
         return try decoder.decode(SessionResponse.self, from: data)
     }
 
+    /// Asks the backend to render the AI "proposed result" visualization
+    /// from the archived Before photo + extracted requirements.
+    /// Returns JPEG bytes. Slow call (hosted image model) — generous timeout.
+    func requestVisualization(sessionID: String) async throws -> Data {
+        var request = URLRequest(url: baseURL.appendingPathComponent("sessions/\(sessionID)/visualize"))
+        request.httpMethod = "POST"
+        request.timeoutInterval = 120
+        let (data, response) = try await URLSession.shared.data(for: request)
+        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+            throw UploadError.badStatus(http.statusCode, String(decoding: data, as: UTF8.self))
+        }
+        return data
+    }
+
     /// Archives a visit photo to the backend's session directory (the
     /// permanent project record). Best-effort: the phone keeps its own copy.
     func uploadPhoto(sessionID: String, kind: String, jpeg: Data) async throws {
