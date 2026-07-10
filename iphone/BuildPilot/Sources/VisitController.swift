@@ -1,5 +1,10 @@
 import Foundation
+import OSLog
 import SwiftUI
+
+/// Unified logging for field diagnostics — filter in Console.app with
+/// subsystem "com.buildpilot.app". Invisible to the painter.
+let visitLog = Logger(subsystem: "com.buildpilot.app", category: "visit")
 
 /// The visit state machine: idle → scanning → processing → estimate/failed.
 ///
@@ -58,7 +63,9 @@ final class VisitController: ObservableObject {
         }
 
         phase = .connecting
+        visitLog.info("Start visit: locating backend (configured: \(!self.backendURLString.isEmpty))")
         guard let backendURL = await locateBackend() else {
+            visitLog.error("Start visit aborted: no backend found")
             phase = .failed(
                 message: "Couldn't find your Mac on this Wi-Fi.\n\nMake sure the Mac is awake, on the same network, and running Build Pilot. Then try again — or pick your Mac in Settings (the gear on the Visits screen).",
                 canRetry: false
@@ -66,6 +73,7 @@ final class VisitController: ObservableObject {
             return
         }
         guard await Self.isReachable(backendURL) else {
+            visitLog.error("Start visit aborted: \(backendURL.absoluteString) not answering /health")
             phase = .failed(
                 message: "Your Mac was found but isn't answering.\n\nCheck that Build Pilot is running on it, then try again.",
                 canRetry: false
@@ -92,6 +100,7 @@ final class VisitController: ObservableObject {
         pendingBundle = nil
         readbackConfirmed = false
         roomCapture.start()
+        visitLog.info("Scanning started (backend: \(backendURL.absoluteString))")
         phase = .scanning
     }
 
@@ -105,9 +114,11 @@ final class VisitController: ObservableObject {
                 guard let self else { return }
                 switch result {
                 case .success(let roomJSON):
+                    visitLog.info("Scan finalized: \(roomJSON.count) bytes room JSON, audio: \(audioFile != nil)")
                     self.pendingBundle = (roomJSON, audioFile)
                     await self.uploadPendingBundle()
-                case .failure:
+                case .failure(let error):
+                    visitLog.error("RoomPlan processing failed: \(error.localizedDescription)")
                     self.phase = .failed(
                         message: "The room scan couldn't be completed. Walk the room again, keeping every wall in view.",
                         canRetry: false
@@ -167,9 +178,11 @@ final class VisitController: ObservableObject {
             return
         }
         phase = .processing(.drafting)
+        let uploadStarted = Date()
         do {
             let session = try await SessionUploader(backendURL: url)
                 .upload(roomScan: bundle.roomJSON, audioFile: bundle.audioFile)
+            visitLog.info("Upload + pipeline finished in \(Date().timeIntervalSince(uploadStarted), format: .fixed(precision: 1))s → \(session.status) (\(session.sessionId))")
             if session.status == "completed" {
                 pendingBundle = nil
                 history.add(name: visitName, session: session)
@@ -182,6 +195,7 @@ final class VisitController: ObservableObject {
                 )
             }
         } catch {
+            visitLog.error("Upload failed after \(Date().timeIntervalSince(uploadStarted), format: .fixed(precision: 1))s: \(error.localizedDescription)")
             phase = .failed(message: Self.friendlyUploadError(error), canRetry: true)
         }
     }

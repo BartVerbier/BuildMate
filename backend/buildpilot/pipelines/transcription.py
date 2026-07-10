@@ -40,6 +40,22 @@ class MlxWhisperTranscriber:
             return False
         return True
 
+    def warm_up(self) -> None:
+        """Force model download and MLX compilation ahead of the first visit
+        by transcribing a fraction of a second of silence. Called from a
+        background thread at server startup so the first real transcription
+        never pays the cold-start cost during a customer visit."""
+        import numpy as np
+
+        try:
+            import mlx_whisper
+        except ImportError:
+            return
+        mlx_whisper.transcribe(
+            np.zeros(WHISPER_SAMPLE_RATE // 10, dtype=np.float32),
+            path_or_hf_repo=self.model_name,
+        )
+
     def transcribe(self, audio_path: Path) -> str:
         if not audio_path.exists():
             raise TranscriptionError(f"Audio file not found: {audio_path}")

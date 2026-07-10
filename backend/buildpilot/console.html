@@ -117,13 +117,20 @@ function pipeline(s) {
     ["Extract requirements", !!(s.requirements && s.requirements.transcript_available)],
     ["Draft estimate", !!s.estimate, "deterministic"],
   ];
+  const meta = s.raw_metadata || {};
+  const timing = key => meta[`timing_${key}_s`] ? `${meta[`timing_${key}_s`]}s` : null;
+  const stageTiming = {"Measure room": timing("measure"), "Transcribe audio": timing("transcribe"),
+                       "Extract requirements": timing("extract"), "Draft estimate": timing("estimate")};
   return steps.map(([label, done, tag]) => `
     <div class="step">
       <span class="mark ${done ? "ok" : failed ? "bad" : ""}">${done ? "✓" : failed ? "✕" : "–"}</span>
       <span>${label}</span>
-      <span class="state">${done ? (tag || "complete") : failed ? "failed" : "skipped / degraded"}</span>
+      <span class="state">${done ? [tag, stageTiming[label]].filter(Boolean).join(" · ") || "complete"
+                                 : failed ? "failed" : "skipped / degraded"}</span>
     </div>`).join("")
-    + (failed ? `<div class="step bad">⚠ ${esc(s.raw_metadata?.error || "processing failed")}</div>` : "");
+    + (failed ? `<div class="step bad">⚠ ${esc(meta.error || "processing failed")}</div>` : "")
+    + (meta.transcription_error ? `<div class="step"><span class="mark bad">⚠</span><span class="muted">transcription: ${esc(meta.transcription_error)}</span></div>` : "")
+    + (meta.extraction_error ? `<div class="step"><span class="mark bad">⚠</span><span class="muted">extraction: ${esc(meta.extraction_error)}</span></div>` : "");
 }
 
 // ---- floor plan from CapturedRoom geometry (top-down, metres) ----

@@ -82,8 +82,11 @@ class SessionStore:
         return session
 
     def save(self, session: Session) -> None:
+        """Atomic write: a crash mid-save can never corrupt session.json."""
         path = self.session_dir(session.session_id) / SESSION_FILE
-        path.write_text(session.model_dump_json(indent=2))
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(session.model_dump_json(indent=2))
+        tmp.replace(path)
 
     def load(self, session_id: str) -> Optional[Session]:
         path = self.session_dir(session_id) / SESSION_FILE
