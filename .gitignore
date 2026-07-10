@@ -1,0 +1,18 @@
+# macOS
+.DS_Store
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+
+# Local secrets
+.env
+.env.*
+
+# Xcode (for the future iPhone app)
+DerivedData/
+xcuserdata/
+*.xcuserstate
