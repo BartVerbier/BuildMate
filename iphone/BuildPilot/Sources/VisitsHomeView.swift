@@ -110,7 +110,9 @@ struct SettingsSheet: View {
     @Binding var backendURLString: String
     @Environment(\.dismiss) private var dismiss
     @StateObject private var discovery = BackendDiscovery()
-    @State private var selectedOK: Bool?
+    @State private var resolvingMacID: String?
+    @State private var selectedMacID: String?
+    @State private var selectionOK: Bool?
     @State private var showManualEntry = false
 
     // Shown on every quote the customer receives. No CRM — just identity.
@@ -157,7 +159,7 @@ struct SettingsSheet: View {
                                     Label(mac.name, systemImage: "desktopcomputer")
                                         .foregroundStyle(.primary)
                                     Spacer()
-                                    connectionBadge
+                                    badge(for: mac)
                                 }
                             }
                         }
@@ -165,7 +167,7 @@ struct SettingsSheet: View {
                 } header: {
                     Text("Your Mac")
                 } footer: {
-                    Text("Open Build Pilot on your Mac and it appears here automatically. Both devices must be on the same Wi-Fi.")
+                    Text(footerText)
                 }
 
                 Section {
@@ -191,29 +193,54 @@ struct SettingsSheet: View {
         .onDisappear { discovery.stop() }
     }
 
+    /// Per-row state: spinner while this Mac is being tried, then a green
+    /// check (connected, now selected) or red cross (couldn't connect).
     @ViewBuilder
-    private var connectionBadge: some View {
-        if let ok = selectedOK {
+    private func badge(for mac: BackendDiscovery.DiscoveredMac) -> some View {
+        if resolvingMacID == mac.id {
+            ProgressView()
+        } else if selectedMacID == mac.id, let ok = selectionOK {
             Image(systemName: ok ? "checkmark.circle.fill" : "xmark.circle.fill")
                 .foregroundStyle(ok ? .green : .red)
         }
     }
 
+    private var footerText: String {
+        if selectionOK == true {
+            return "Connected. This Mac will receive your visits."
+        }
+        if selectionOK == false {
+            return "Couldn't connect to that Mac. Check Build Pilot is running on it, then tap it again."
+        }
+        return "Open Build Pilot on your Mac and it appears here automatically. Both devices must be on the same Wi-Fi. Tap your Mac to connect."
+    }
+
     private func select(_ mac: BackendDiscovery.DiscoveredMac) async {
-        selectedOK = nil
+        resolvingMacID = mac.id
+        selectedMacID = mac.id
+        selectionOK = nil
+        defer { resolvingMacID = nil }
+
         guard let url = await BackendDiscovery.resolve(mac) else {
-            selectedOK = false
+            visitLog.error("Settings: could not resolve \(mac.id)")
+            selectionOK = false
             return
         }
-        backendURLString = url.absoluteString
-        await verifyCurrent()
+        let reachable = await HTTPBackendClient(baseURL: url).isReachable()
+        visitLog.info("Settings: \(mac.id) → \(url.absoluteString), reachable: \(reachable)")
+        if reachable {
+            backendURLString = url.absoluteString
+            selectionOK = true
+        } else {
+            selectionOK = false
+        }
     }
 
     private func verifyCurrent() async {
         guard let url = URL(string: backendURLString) else {
-            selectedOK = false
+            selectionOK = false
             return
         }
-        selectedOK = await HTTPBackendClient(baseURL: url).isReachable()
+        selectionOK = await HTTPBackendClient(baseURL: url).isReachable()
     }
 }

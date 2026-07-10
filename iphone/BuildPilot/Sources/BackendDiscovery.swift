@@ -61,9 +61,23 @@ final class BackendDiscovery: ObservableObject {
                 switch state {
                 case .ready:
                     guard case let .hostPort(host, port)? = connection.currentPath?.remoteEndpoint
-                    else { return finish(nil) }
-                    finish(Self.url(host: host, port: port))
-                case .failed, .cancelled:
+                    else {
+                        visitLog.error("Resolve \(mac.id): connected but no host/port on path")
+                        return finish(nil)
+                    }
+                    let url = Self.url(host: host, port: port)
+                    visitLog.info("Resolved \(mac.id) → \(url?.absoluteString ?? "nil")")
+                    finish(url)
+                case .waiting(let error):
+                    // Fail fast: .waiting means the service resolved but the
+                    // connection can't establish (e.g. stale advertisement
+                    // pointing at a dead port). Don't sit out the timeout.
+                    visitLog.error("Resolve \(mac.id): waiting — \(error.localizedDescription)")
+                    finish(nil)
+                case .failed(let error):
+                    visitLog.error("Resolve \(mac.id): failed — \(error.localizedDescription)")
+                    finish(nil)
+                case .cancelled:
                     finish(nil)
                 default:
                     break

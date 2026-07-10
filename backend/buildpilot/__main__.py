@@ -49,6 +49,11 @@ def configure_logging() -> Path:
 def advertise(port: int) -> subprocess.Popen | None:
     if shutil.which("dns-sd") is None:  # non-macOS dev machine: skip quietly
         return None
+    # Self-heal: kill any stray registration from a previous run. An orphaned
+    # dns-sd advertises a dead port and makes the iPhone see a phantom
+    # duplicate Mac ("... (2)") that can never connect.
+    subprocess.run(["pkill", "-f", "dns-sd -R Build Pilot"], capture_output=True)
+    time.sleep(0.5)  # let mDNS drop the stale name before re-registering
     hostname = socket.gethostname().removesuffix(".local")
     return subprocess.Popen(
         ["dns-sd", "-R", f"Build Pilot on {hostname}", "_buildpilot._tcp", "local", str(port)],
