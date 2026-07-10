@@ -97,15 +97,24 @@ class GeminiVisualizer:
             ]
         }
         try:
+            # API key goes in a header, never in the URL — URLs leak into
+            # exception messages and logs.
             response = httpx.post(
                 f"{API_ROOT}/models/{self.model}:generateContent",
-                params={"key": api_key},
+                headers={"x-goog-api-key": api_key},
                 json=body,
                 timeout=90,
             )
             response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise VisualizationError(
+                f"image model returned HTTP {exc.response.status_code}: "
+                f"{exc.response.text[:200]}"
+            ) from None
         except httpx.HTTPError as exc:
-            raise VisualizationError(f"image model request failed: {exc}") from exc
+            raise VisualizationError(
+                f"image model request failed: {type(exc).__name__}"
+            ) from None
 
         try:
             for candidate in response.json().get("candidates", []):
