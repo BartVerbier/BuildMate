@@ -1,99 +1,241 @@
 import SwiftUI
 
-/// The draft estimate review screen. Everything shown here is advisory —
-/// the painter has final approval.
+/// Draft estimate review. The price is the hero; everything below it exists
+/// to build confidence in that number. Used in the visit flow (onDone set)
+/// and when reopening a recent visit (onDone nil, plain navigation).
 struct EstimateView: View {
     let session: SessionResponse
-    let onDone: () -> Void
+    let visitName: String
+    let onDone: (() -> Void)?
+
+    @State private var quoteURL: URL?
 
     var body: some View {
-        NavigationStack {
-            List {
-                if let estimate = session.estimate {
-                    Section("Draft quotation") {
-                        HStack {
-                            Text("Suggested total (incl. VAT)")
-                            Spacer()
-                            Text(euro(estimate.suggestedQuotationEur))
-                                .font(.title3.bold())
-                        }
-                        row("Materials", euro(estimate.materialCostEur))
-                        row("Labour", euro(estimate.labourCostEur))
-                        row("Labour hours", String(format: "%.2f h", estimate.labourHours))
-                        row("Paint", String(format: "%.1f L", estimate.paintQuantityLitres))
-                        row("Primer", String(format: "%.1f L", estimate.primerQuantityLitres))
+        content
+            .navigationTitle("Draft Estimate")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                if onDone != nil {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { onDone?() }
                     }
-                }
-
-                if let m = session.measurements {
-                    Section("Measurements") {
-                        row("Net wall area", sqm(m.netWallAreaM2))
-                        row("Ceiling area", sqm(m.ceilingAreaM2))
-                        row("Floor area", sqm(m.floorAreaM2))
-                        row("Doors / windows", sqm(m.doorAreaM2 + m.windowAreaM2))
-                        row("Scan confidence", String(format: "%.0f %%", m.confidenceScore * 100))
-                    }
-                }
-
-                if let r = session.requirements {
-                    if !r.scopeOfWork.isEmpty {
-                        Section("Scope of work") {
-                            ForEach(r.scopeOfWork, id: \.self) { Text($0) }
-                        }
-                    }
-                    if !r.exclusions.isEmpty {
-                        Section("Exclusions") {
-                            ForEach(r.exclusions, id: \.self) { Text($0) }
-                        }
-                    }
-                    if !r.preparationRequired.isEmpty {
-                        Section("Preparation") {
-                            ForEach(r.preparationRequired, id: \.self) { Text($0) }
-                        }
-                    }
-                    if !r.specialNotes.isEmpty {
-                        Section("Notes") {
-                            ForEach(r.specialNotes, id: \.self) { Text($0) }
-                        }
-                    }
-                }
-
-                if let estimate = session.estimate {
-                    Section("How this was calculated") {
-                        ForEach(estimate.assumptions, id: \.self) {
-                            Text($0).font(.footnote).foregroundStyle(.secondary)
-                        }
-                    }
-                }
-
-                Section {
-                    Text("This estimate is advisory. Review every number before quoting the customer.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
                 }
             }
-            .navigationTitle("Draft Estimate")
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("New Visit", action: onDone)
-                }
+            .safeAreaInset(edge: .bottom) { shareBar }
+            .task { renderQuote() }
+            .modifier(WrapInStackIfNeeded(needsStack: onDone != nil))
+    }
+
+    private var content: some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                heroCard
+                breakdownCard
+                if let m = session.measurements { measurementsCard(m) }
+                if let r = session.requirements { requirementsCards(r) }
+                if let e = session.estimate { assumptionsCard(e) }
+                advisoryFooter
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 8)
+            .padding(.bottom, 12)
+        }
+        .background(Color(.systemGroupedBackground))
+    }
+
+    // MARK: sections
+
+    private var heroCard: some View {
+        VStack(spacing: 6) {
+            Text(visitName)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Text(Format.euroRounded(session.estimate?.suggestedQuotationEur ?? 0))
+                .font(.system(size: 56, weight: .bold, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(.green)
+                .minimumScaleFactor(0.5)
+                .lineLimit(1)
+            Text("Suggested quotation · incl. margin and VAT")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 28)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .accessibilityElement(children: .combine)
+    }
+
+    private var breakdownCard: some View {
+        Card(title: "Breakdown") {
+            if let e = session.estimate {
+                LabeledRow("Labour", detail: Format.hours(e.labourHours), value: Format.euro(e.labourCostEur))
+                LabeledRow("Materials", value: Format.euro(e.materialCostEur))
+                LabeledRow("Paint", value: Format.litres(e.paintQuantityLitres))
+                LabeledRow("Primer", value: Format.litres(e.primerQuantityLitres))
             }
         }
     }
 
-    private func row(_ label: String, _ value: String) -> some View {
+    private func measurementsCard(_ m: RoomMeasurement) -> some View {
+        Card(title: "Room") {
+            LabeledRow("Walls (net)", value: Format.squareMetres(m.netWallAreaM2))
+            LabeledRow("Ceiling", value: Format.squareMetres(m.ceilingAreaM2))
+            LabeledRow("Floor", value: Format.squareMetres(m.floorAreaM2))
+            LabeledRow("Scan confidence", value: "\(Int((m.confidenceScore * 100).rounded())) %")
+        }
+    }
+
+    @ViewBuilder
+    private func requirementsCards(_ r: RequirementExtraction) -> some View {
+        if !r.scopeOfWork.isEmpty {
+            Card(title: "Scope of Work") { BulletList(items: r.scopeOfWork) }
+        }
+        if !r.exclusions.isEmpty {
+            Card(title: "Not Included") { BulletList(items: r.exclusions) }
+        }
+        if !r.preparationRequired.isEmpty {
+            Card(title: "Preparation") { BulletList(items: r.preparationRequired) }
+        }
+        if !r.specialNotes.isEmpty {
+            Card(title: "Customer Notes") { BulletList(items: r.specialNotes) }
+        }
+    }
+
+    private func assumptionsCard(_ e: EstimateDraft) -> some View {
+        Card(title: nil) {
+            DisclosureGroup {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(e.assumptions, id: \.self) { line in
+                        Text(line)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                .padding(.top, 8)
+            } label: {
+                Label("How this was calculated", systemImage: "function")
+                    .font(.body.weight(.medium))
+            }
+        }
+    }
+
+    private var advisoryFooter: some View {
+        Text("This is a draft. Review every number before quoting the customer.")
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.center)
+            .padding(.top, 4)
+    }
+
+    private var shareBar: some View {
+        HStack(spacing: 12) {
+            if let quoteURL {
+                ShareLink(item: quoteURL, preview: SharePreview(visitName)) {
+                    Label("Share Quote", systemImage: "square.and.arrow.up")
+                        .font(.title3.weight(.semibold))
+                        .frame(maxWidth: .infinity, minHeight: 56)
+                }
+                .buttonStyle(.borderedProminent)
+            } else {
+                Label("Share Quote", systemImage: "square.and.arrow.up")
+                    .font(.title3.weight(.semibold))
+                    .frame(maxWidth: .infinity, minHeight: 56)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 8)
+        .padding(.bottom, 4)
+        .background(.bar)
+    }
+
+    private func renderQuote() {
+        quoteURL = QuotePDF.render(session: session, visitName: visitName)
+    }
+}
+
+// MARK: - building blocks
+
+private struct Card<Content: View>: View {
+    let title: String?
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let title {
+                Text(title.uppercased())
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .kerning(0.6)
+            }
+            content
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+}
+
+private struct LabeledRow: View {
+    let label: String
+    let detail: String?
+    let value: String
+
+    init(_ label: String, detail: String? = nil, value: String) {
+        self.label = label
+        self.detail = detail
+        self.value = value
+    }
+
+    var body: some View {
         HStack {
             Text(label)
+            if let detail {
+                Text(detail)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
             Spacer()
-            Text(value).foregroundStyle(.secondary)
+            Text(value)
+                .font(.body.weight(.medium).monospacedDigit())
+        }
+        .padding(.vertical, 2)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct BulletList: View {
+    let items: [String]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(items, id: \.self) { item in
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Circle()
+                        .fill(.tertiary)
+                        .frame(width: 5, height: 5)
+                        .offset(y: -2)
+                    Text(item)
+                }
+            }
         }
     }
+}
 
-    private func euro(_ value: Double) -> String {
-        "€" + String(format: "%.2f", value)
-    }
+/// The visit flow presents EstimateView inside a fullScreenCover (no stack);
+/// history pushes it onto the existing stack. Wrap only when needed.
+private struct WrapInStackIfNeeded: ViewModifier {
+    let needsStack: Bool
 
-    private func sqm(_ value: Double) -> String {
-        String(format: "%.1f m²", value)
+    func body(content: Content) -> some View {
+        if needsStack {
+            NavigationStack { content }
+        } else {
+            content
+        }
     }
 }

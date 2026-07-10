@@ -1,116 +1,75 @@
 import SwiftUI
 
+/// Root: the Visits home lives in a NavigationStack; an active visit
+/// (scanning → processing → estimate) is a full-screen flow above it.
 struct ContentView: View {
     @StateObject private var visit = VisitController()
 
+    private var visitFlowPresented: Binding<Bool> {
+        Binding(
+            get: { visit.phase.isActiveVisit },
+            set: { presented in if !presented { visit.reset() } }
+        )
+    }
+
     var body: some View {
+        NavigationStack {
+            VisitsHomeView(visit: visit)
+        }
+        .fullScreenCover(isPresented: visitFlowPresented) {
+            visitFlow
+        }
+        .tint(.green)
+        .preferredColorScheme(.dark)
+    }
+
+    @ViewBuilder
+    private var visitFlow: some View {
         switch visit.phase {
         case .idle:
-            idleView
+            EmptyView()
         case .scanning:
-            scanningView
-        case .processing(let label):
-            processingView(label)
+            CaptureVisitView(visit: visit)
+        case .processing(let stage):
+            ProcessingView(stage: stage)
         case .done(let session):
-            EstimateView(session: session) { visit.reset() }
+            EstimateView(session: session, visitName: visit.visitName) {
+                visit.reset()
+            }
         case .failed(let message):
-            failedView(message)
+            VisitFailedView(message: message) { visit.reset() }
         }
     }
+}
 
-    private var idleView: some View {
-        VStack(spacing: 24) {
+struct VisitFailedView: View {
+    let message: String
+    let onDismiss: () -> Void
+
+    var body: some View {
+        VStack(spacing: 16) {
             Spacer()
-            Image(systemName: "paintbrush.fill")
-                .font(.system(size: 56))
-                .foregroundStyle(.tint)
-            Text("Build Pilot")
-                .font(.largeTitle.bold())
-            Text("Scan one room while talking with the customer, get a draft estimate.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 32)
-            Spacer()
-            Button {
-                Task { await visit.startVisit() }
-            } label: {
-                Text("Start Visit")
-                    .font(.title2.bold())
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-            }
-            .buttonStyle(.borderedProminent)
-            .padding(.horizontal, 24)
-
-            HStack {
-                Image(systemName: "desktopcomputer")
-                    .foregroundStyle(.secondary)
-                TextField("Mac backend URL", text: visit.$backendURLString)
-                    .textFieldStyle(.roundedBorder)
-                    .keyboardType(.URL)
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-            }
-            .padding(.horizontal, 24)
-            .padding(.bottom, 16)
-        }
-    }
-
-    private var scanningView: some View {
-        ZStack(alignment: .bottom) {
-            RoomCaptureViewRepresentable(controller: visit.roomCapture)
-                .ignoresSafeArea()
-            VStack(spacing: 8) {
-                Label("Recording audio", systemImage: "mic.fill")
-                    .font(.footnote)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(.ultraThinMaterial, in: Capsule())
-                Button {
-                    visit.finishVisit()
-                } label: {
-                    Text("Finish Visit")
-                        .font(.title2.bold())
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.red)
-                .padding(.horizontal, 24)
-            }
-            .padding(.bottom, 24)
-        }
-    }
-
-    private func processingView(_ label: String) -> some View {
-        VStack(spacing: 20) {
-            ProgressView()
-                .controlSize(.large)
-            Text(label)
-                .font(.headline)
-            Text("Keep the app open — transcription runs on your Mac.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-        }
-        .padding()
-    }
-
-    private func failedView(_ message: String) -> some View {
-        VStack(spacing: 20) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.system(size: 44))
                 .foregroundStyle(.orange)
-            Text("Visit failed")
+                .accessibilityHidden(true)
+            Text("Visit Failed")
                 .font(.title2.bold())
             Text(message)
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-                .padding(.horizontal, 24)
-            Button("Back to start") { visit.reset() }
-                .buttonStyle(.bordered)
+                .padding(.horizontal, 32)
+            Spacer()
+            Button(action: onDismiss) {
+                Text("Back to Visits")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(.bordered)
+            .padding(.horizontal, 24)
+            .padding(.bottom, 16)
         }
-        .padding()
+        .background(Color(.systemBackground))
     }
 }

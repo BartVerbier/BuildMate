@@ -91,6 +91,25 @@ lower cost). Missing credentials, empty transcripts, or API failures degrade
 to the default paint scope with an explicit note — the pipeline always
 completes and the painter always reviews.
 
+## Decision 17 — Mac console is a local web dashboard, not a native app (2026-07-10)
+
+The Mac-side console (session list, pipeline status, room preview,
+transcript, requirements, estimate, export) is a single self-contained HTML
+page served by the existing FastAPI backend at `/`. A native macOS app would
+double the Apple codebase for a founder-facing dev console; the web page has
+zero extra toolchain, reads straight from the session directories, and stays
+in sync with the API by construction. The room preview is a top-down floor
+plan rendered from the CapturedRoom wall geometry — more legible than a 3D
+point cloud and dependency-free. Revisit if the Mac side ever becomes a
+customer-facing product.
+
+## Decision 18 — Quote sharing via PDF + native share sheet (2026-07-10)
+
+The iPhone renders the draft quote to a light, print-styled PDF (SwiftUI
+`ImageRenderer` into a PDF context) and shares it with SwiftUI `ShareLink` —
+Apple's native share sheet provides Mail, Messages, WhatsApp, AirDrop,
+Print, and Save to Files with no custom sharing code.
+
 ## Rationale
 
 These decisions are intended to reduce complexity and increase the likelihood of building a working prototype quickly. The core value proposition is not the scanning technology itself, but the automation of the site visit and the generation of a useful draft estimate.

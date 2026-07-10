@@ -31,14 +31,33 @@ address, e.g. `http://192.168.1.23:8787` (find it via System Settings →
 Wi-Fi → Details, and make sure the backend is running — see
 [backend/README.md](../backend/README.md)).
 
+## Screens (dark appearance, green accent)
+
+1. **Visits** — recent visits with their quotes, one primary action:
+   Start New Visit. Settings (Mac address + connection test) behind the gear.
+2. **Capture** — Apple's native RoomPlan experience full-bleed, with a live
+   recording pill (timer + mic) and a Finish Visit button. Cancel asks
+   before discarding.
+3. **Processing** — a calm three-step checklist (room scan, audio, drafting
+   on your Mac).
+4. **Draft Estimate** — the price as hero, then breakdown, room measurements,
+   scope/exclusions/prep/notes, and a collapsible "How this was calculated".
+   **Share Quote** renders a print-styled PDF and opens the native share
+   sheet (Mail, Messages, WhatsApp, AirDrop, Print, Save to Files).
+
 ## Project layout
 
 - `project.yml` — XcodeGen spec (the `.xcodeproj` is generated, not committed)
 - `Sources/VisitController.swift` — visit state machine
+- `Sources/VisitHistory.swift` — on-device recent-visit store
 - `Sources/RoomCaptureController.swift` — RoomPlan session + CapturedRoom JSON export
 - `Sources/AudioRecorder.swift` — AVFoundation m4a recording
 - `Sources/SessionUploader.swift` — multipart upload to the Mac
-- `Sources/ContentView.swift`, `EstimateView.swift` — the three-screen UI
+- `Sources/ContentView.swift` — root + visit flow presentation
+- `Sources/VisitsHomeView.swift`, `CaptureVisitView.swift`,
+  `ProcessingView.swift`, `EstimateView.swift` — the four screens
+- `Sources/QuotePDF.swift` — print-styled PDF quote for the share sheet
+- `Sources/Format.swift` — display formatting
 
 ## Design rules
 

@@ -56,7 +56,10 @@ verbatim and displays the returned estimate. No processing on the phone.
   failure fails the session; transcription/extraction failures degrade to
   the default paint scope with a note.
 - `server.py` — `POST /sessions` (synchronous, Decision 14),
-  `GET /sessions/{id}`, `GET /health`.
+  `GET /sessions` (list), `GET /sessions/{id}`, `GET /sessions/{id}/room`,
+  `GET /sessions/{id}/transcript`, `GET /health`, and `GET /` — the Mac
+  console (Decision 17): a local web dashboard with session list, pipeline
+  status, floor-plan preview, transcript, requirements, estimate, and export.
 
 ## Degradation policy
 

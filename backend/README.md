@@ -33,12 +33,23 @@ cd backend
 
 `--host 0.0.0.0` makes it reachable from the iPhone on the same Wi-Fi.
 
+## Mac console
+
+Open **http://localhost:8787/** in a browser while the server runs: session
+list, processing pipeline, top-down floor plan from the scan, transcript,
+requirements, the draft estimate with its calculation trail, and export
+links. It refreshes automatically as visits arrive from the phone.
+
 ## API
 
+- `GET /` — the Mac console (local web dashboard)
 - `GET /health` — status + stage availability
 - `POST /sessions` — multipart (`room_scan` JSON, optional `audio` m4a);
   runs the pipeline synchronously and returns the completed session
+- `GET /sessions` — all sessions, newest first
 - `GET /sessions/{id}` — re-fetch (recovery after a dropped connection)
+- `GET /sessions/{id}/room` — the CapturedRoom JSON, verbatim
+- `GET /sessions/{id}/transcript` — plain-text transcript (404 if none)
 
 Try it without a phone:
 

@@ -170,3 +170,44 @@ def test_unknown_session_404(tmp_path):
 def test_path_traversal_session_id_rejected(tmp_path):
     client, _ = make_client(tmp_path)
     assert client.get("/sessions/..%2F..%2Fetc").status_code in (400, 404)
+
+
+# --- console endpoints -------------------------------------------------------
+
+
+def test_console_page_served(tmp_path):
+    client, _ = make_client(tmp_path)
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "Build Pilot" in response.text
+    assert "Processing pipeline" in response.text
+
+
+def test_session_list_newest_first(tmp_path):
+    client, _ = make_client(tmp_path)
+    first = upload(client).json()["session_id"]
+    second = upload(client).json()["session_id"]
+
+    listed = client.get("/sessions").json()
+    ids = [s["session_id"] for s in listed]
+    assert set(ids) == {first, second}
+    assert listed[0]["created_at"] >= listed[1]["created_at"]
+
+
+def test_room_and_transcript_endpoints(tmp_path):
+    client, _ = make_client(tmp_path)
+    session_id = upload(client).json()["session_id"]
+
+    room = client.get(f"/sessions/{session_id}/room")
+    assert room.status_code == 200
+    assert len(room.json()["walls"]) == 4
+
+    transcript = client.get(f"/sessions/{session_id}/transcript")
+    assert transcript.status_code == 200
+    assert "Paint" in transcript.text
+
+
+def test_transcript_404_when_no_audio(tmp_path):
+    client, _ = make_client(tmp_path)
+    session_id = upload(client, with_audio=False).json()["session_id"]
+    assert client.get(f"/sessions/{session_id}/transcript").status_code == 404

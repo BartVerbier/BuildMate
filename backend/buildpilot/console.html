@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Build Pilot — Console</title>
+<style>
+  :root {
+    --bg: #101211; --panel: #191c1a; --panel-2: #212523; --line: #2b302d;
+    --text: #e8ebe9; --dim: #9aa39d; --green: #30d158; --red: #ff6961;
+    --radius: 12px;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+    height: 100vh; display: flex; overflow: hidden;
+  }
+  aside {
+    width: 280px; min-width: 280px; border-right: 1px solid var(--line);
+    padding: 20px 14px; overflow-y: auto;
+  }
+  aside h1 { font-size: 16px; font-weight: 700; padding: 0 8px 14px; }
+  aside h1 span { color: var(--green); }
+  .visit {
+    padding: 10px 12px; border-radius: var(--radius); cursor: pointer;
+    margin-bottom: 6px; border: 1px solid transparent;
+  }
+  .visit:hover { background: var(--panel); }
+  .visit.active { background: var(--panel-2); border-color: var(--line); }
+  .visit .name { font-weight: 600; font-size: 13px; }
+  .visit .meta { color: var(--dim); font-size: 12px; margin-top: 2px; }
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+         background: var(--green); margin-right: 5px; vertical-align: 1px; }
+  .dot.failed { background: var(--red); }
+  main { flex: 1; overflow-y: auto; padding: 24px 28px; }
+  .empty { color: var(--dim); padding: 80px 0; text-align: center; }
+  header.session { display: flex; align-items: baseline; gap: 12px; margin-bottom: 18px; }
+  header.session h2 { font-size: 20px; }
+  header.session .meta { color: var(--dim); font-size: 13px; }
+  .grid { display: grid; grid-template-columns: 1fr 340px; gap: 16px; align-items: start; }
+  .col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+  .card { background: var(--panel); border: 1px solid var(--line);
+          border-radius: var(--radius); padding: 16px 18px; }
+  .card h3 { font-size: 12px; font-weight: 600; letter-spacing: .06em;
+             text-transform: uppercase; color: var(--dim); margin-bottom: 12px; }
+  .step { display: flex; align-items: center; gap: 10px; padding: 5px 0; font-size: 13px; }
+  .step .mark { width: 18px; text-align: center; }
+  .step .state { margin-left: auto; color: var(--dim); font-size: 12px; }
+  .ok { color: var(--green); } .bad { color: var(--red); }
+  .hero { font-size: 40px; font-weight: 800; color: var(--green);
+          font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+  .hero-label { color: var(--dim); font-size: 13px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  td { padding: 6px 0; border-bottom: 1px solid var(--line); }
+  tr:last-child td { border-bottom: 0; font-weight: 700; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  ul { padding-left: 18px; font-size: 13px; }
+  li { margin: 4px 0; }
+  .muted { color: var(--dim); }
+  pre.transcript { white-space: pre-wrap; font: 13px/1.6 ui-monospace, "SF Mono", Menlo, monospace;
+                   color: var(--text); max-height: 260px; overflow-y: auto; }
+  svg.plan { width: 100%; height: auto; display: block; }
+  .exports { display: flex; gap: 8px; flex-wrap: wrap; }
+  .exports a {
+    color: var(--green); text-decoration: none; border: 1px solid var(--line);
+    border-radius: 8px; padding: 6px 12px; font-size: 13px;
+  }
+  .exports a:hover { background: var(--panel-2); }
+  .assumptions li { color: var(--dim); font-size: 12px; }
+</style>
+</head>
+<body>
+<aside>
+  <h1>Build <span>Pilot</span> Console</h1>
+  <div id="visits"></div>
+</aside>
+<main id="main"><div class="empty">Loading sessions…</div></main>
+
+<script>
+const eur = v => "€" + v.toLocaleString("en-IE", {minimumFractionDigits: 2, maximumFractionDigits: 2});
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+let sessions = [], activeId = null;
+
+async function loadSessions() {
+  sessions = await (await fetch("/sessions")).json();
+  const box = document.getElementById("visits");
+  if (!sessions.length) {
+    box.innerHTML = '<div class="muted" style="padding:0 8px">No visits yet. Upload one from the iPhone app or with curl.</div>';
+    document.getElementById("main").innerHTML = '<div class="empty">Waiting for the first visit…</div>';
+    return;
+  }
+  box.innerHTML = sessions.map(s => `
+    <div class="visit ${s.session_id === activeId ? "active" : ""}" onclick="show('${s.session_id}')">
+      <div class="name"><span class="dot ${s.status === "failed" ? "failed" : ""}"></span>${esc(s.session_id)}</div>
+      <div class="meta">${new Date(s.created_at).toLocaleString()} · ${esc(s.status)}</div>
+    </div>`).join("");
+  if (!activeId) show(sessions[0].session_id);
+}
+
+async function show(id) {
+  activeId = id;
+  document.querySelectorAll(".visit").forEach(el => el.classList.toggle("active", el.textContent.includes(id)));
+  const s = await (await fetch(`/sessions/${id}`)).json();
+  let transcript = null, room = null;
+  try { const r = await fetch(`/sessions/${id}/transcript`); if (r.ok) transcript = await r.text(); } catch {}
+  try { const r = await fetch(`/sessions/${id}/room`); if (r.ok) room = await r.json(); } catch {}
+  render(s, transcript, room);
+}
+
+function pipeline(s) {
+  const failed = s.status === "failed";
+  const steps = [
+    ["Receive bundle", true],
+    ["Measure room", !!s.measurements],
+    ["Transcribe audio", !!(s.requirements && s.requirements.transcript_available), "local Whisper"],
+    ["Extract requirements", !!(s.requirements && s.requirements.transcript_available)],
+    ["Draft estimate", !!s.estimate, "deterministic"],
+  ];
+  return steps.map(([label, done, tag]) => `
+    <div class="step">
+      <span class="mark ${done ? "ok" : failed ? "bad" : ""}">${done ? "✓" : failed ? "✕" : "–"}</span>
+      <span>${label}</span>
+      <span class="state">${done ? (tag || "complete") : failed ? "failed" : "skipped / degraded"}</span>
+    </div>`).join("")
+    + (failed ? `<div class="step bad">⚠ ${esc(s.raw_metadata?.error || "processing failed")}</div>` : "");
+}
+
+// ---- floor plan from CapturedRoom geometry (top-down, metres) ----
+function cols(t) {
+  if (!t) return null;
+  const flat = Array.isArray(t[0]) ? t.flat() : t;
+  if (flat.length !== 16) return null;
+  return [flat.slice(0,4), flat.slice(4,8), flat.slice(8,12), flat.slice(12,16)];
+}
+function segment(surface) {
+  const c = cols(surface.transform), d = surface.dimensions || [];
+  if (!c || d.length < 1) return null;
+  const half = d[0] / 2, x = c[0], t = c[3];
+  return [[t[0] - half*x[0], t[2] - half*x[2]], [t[0] + half*x[0], t[2] + half*x[2]]];
+}
+function floorPlan(room) {
+  if (!room) return '<div class="muted">No room scan on this session.</div>';
+  const walls = (room.walls || []).map(segment).filter(Boolean);
+  if (!walls.length) return '<div class="muted">Scan contains no wall geometry.</div>';
+  const openings = ["doors", "windows", "openings"].flatMap(k =>
+    (room[k] || []).map(segment).filter(Boolean).map(seg => ({seg, kind: k})));
+  const xs = walls.flat().map(p => p[0]), zs = walls.flat().map(p => p[1]);
+  const minX = Math.min(...xs) - .4, maxX = Math.max(...xs) + .4;
+  const minZ = Math.min(...zs) - .4, maxZ = Math.max(...zs) + .4;
+  const line = (seg, color, w) =>
+    `<line x1="${seg[0][0]}" y1="${seg[0][1]}" x2="${seg[1][0]}" y2="${seg[1][1]}"
+       stroke="${color}" stroke-width="${w}" stroke-linecap="round"/>`;
+  const colors = {doors: "#ffb340", windows: "#64b5ff", openings: "#9aa39d"};
+  return `<svg class="plan" viewBox="${minX} ${minZ} ${maxX-minX} ${maxZ-minZ}">
+      ${walls.map(seg => line(seg, "#e8ebe9", 0.09)).join("")}
+      ${openings.map(o => line(o.seg, colors[o.kind], 0.13)).join("")}
+    </svg>
+    <div class="muted" style="font-size:12px;margin-top:8px">
+      Top-down floor plan from the RoomPlan scan (metres).
+      <span style="color:#ffb340">■</span> doors
+      <span style="color:#64b5ff">■</span> windows
+      <span style="color:#9aa39d">■</span> openings
+    </div>`;
+}
+
+function render(s, transcript, room) {
+  const m = s.measurements, r = s.requirements, e = s.estimate;
+  const list = items => items && items.length
+    ? `<ul>${items.map(i => `<li>${esc(i)}</li>`).join("")}</ul>`
+    : '<div class="muted">—</div>';
+  document.getElementById("main").innerHTML = `
+    <header class="session">
+      <h2>${esc(s.session_id)}</h2>
+      <span class="meta">${new Date(s.created_at).toLocaleString()} · ${esc(s.status)}</span>
+    </header>
+    <div class="grid">
+      <div class="col">
+        <div class="card"><h3>Processing pipeline</h3>${pipeline(s)}</div>
+        <div class="card"><h3>Room preview</h3>${floorPlan(room)}</div>
+        ${m ? `<div class="card"><h3>Measurements</h3><table>
+          <tr><td>Net wall area</td><td class="num">${m.net_wall_area_m2.toFixed(1)} m²</td></tr>
+          <tr><td>Ceiling area</td><td class="num">${m.ceiling_area_m2.toFixed(1)} m²</td></tr>
+          <tr><td>Floor area</td><td class="num">${m.floor_area_m2.toFixed(1)} m²</td></tr>
+          <tr><td>Doors + windows</td><td class="num">${(m.door_area_m2 + m.window_area_m2).toFixed(1)} m²</td></tr>
+          <tr><td>Scan confidence</td><td class="num">${Math.round(m.confidence_score * 100)} %</td></tr>
+        </table></div>` : ""}
+        <div class="card"><h3>Transcript</h3>${
+          transcript ? `<pre class="transcript">${esc(transcript)}</pre>`
+                     : '<div class="muted">No transcript (no audio, or transcription degraded).</div>'}</div>
+      </div>
+      <div class="col">
+        ${e ? `<div class="card">
+          <div class="hero-label">Draft quotation (incl. VAT)</div>
+          <div class="hero">${eur(e.suggested_quotation_eur)}</div>
+          <table style="margin-top:12px">
+            <tr><td>Labour (${e.labour_hours.toFixed(2)} h)</td><td class="num">${eur(e.labour_cost_eur)}</td></tr>
+            <tr><td>Materials</td><td class="num">${eur(e.material_cost_eur)}</td></tr>
+            <tr><td>Paint</td><td class="num">${e.paint_quantity_litres.toFixed(1)} L</td></tr>
+            <tr><td>Primer</td><td class="num">${e.primer_quantity_litres.toFixed(1)} L</td></tr>
+            <tr><td>Total (incl. margin + VAT)</td><td class="num">${eur(e.suggested_quotation_eur)}</td></tr>
+          </table>
+        </div>` : ""}
+        ${r ? `<div class="card"><h3>Requirements</h3>
+          <div class="muted" style="font-size:12px;margin-bottom:8px">
+            Paint scope: walls ${r.paint_scope.walls ? "✓" : "✕"} · ceiling ${r.paint_scope.ceiling ? "✓" : "✕"}</div>
+          <strong style="font-size:13px">Scope of work</strong>${list(r.scope_of_work)}
+          <strong style="font-size:13px">Exclusions</strong>${list(r.exclusions)}
+          <strong style="font-size:13px">Preparation</strong>${list(r.preparation_required)}
+          <strong style="font-size:13px">Notes</strong>${list(r.special_notes)}
+        </div>` : ""}
+        ${e ? `<div class="card"><h3>How this was calculated</h3>
+          <ul class="assumptions">${e.assumptions.map(a => `<li>${esc(a)}</li>`).join("")}</ul></div>` : ""}
+        <div class="card"><h3>Export</h3><div class="exports">
+          <a href="/sessions/${s.session_id}" download="${s.session_id}.json">Session JSON</a>
+          <a href="/sessions/${s.session_id}/room" download="${s.session_id}-room.json">Room JSON</a>
+          ${transcript ? `<a href="/sessions/${s.session_id}/transcript" download="${s.session_id}.txt">Transcript</a>` : ""}
+        </div></div>
+      </div>
+    </div>`;
+}
+
+loadSessions();
+setInterval(loadSessions, 5000); // pick up new visits while the console is open
+</script>
+</body>
+</html>

@@ -91,6 +91,22 @@ class SessionStore:
             return None
         return Session.model_validate_json(path.read_text())
 
+    def list_sessions(self) -> list[Session]:
+        """All sessions, newest first. Skips directories without a valid record."""
+        sessions: list[Session] = []
+        for directory in self.root.iterdir():
+            if not directory.is_dir():
+                continue
+            path = directory / SESSION_FILE
+            if not path.exists():
+                continue
+            try:
+                sessions.append(Session.model_validate_json(path.read_text()))
+            except ValueError:
+                continue
+        sessions.sort(key=lambda s: s.created_at, reverse=True)
+        return sessions
+
     def load_room_scan(self, session: Session) -> Dict[str, Any]:
         if session.room_scan is None:
             raise FileNotFoundError("Session has no room scan")

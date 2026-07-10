@@ -29,5 +29,8 @@ dev = [
 [tool.setuptools.packages.find]
 include = ["buildpilot*"]
 
+[tool.setuptools.package-data]
+buildpilot = ["console.html"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

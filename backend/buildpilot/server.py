@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.responses import HTMLResponse, PlainTextResponse
 
 from buildpilot.config import DEFAULT_COMPANY_PROFILE
 from buildpilot.pipeline import VisitPipeline
@@ -92,15 +93,42 @@ def create_app(
         session = app.state.pipeline.run(app.state.store, session)
         return session.model_dump(mode="json")
 
+    @app.get("/sessions")
+    def list_sessions() -> list:
+        return [s.model_dump(mode="json") for s in app.state.store.list_sessions()]
+
     @app.get("/sessions/{session_id}")
     def get_session(session_id: str) -> dict:
+        return _load_or_404(session_id).model_dump(mode="json")
+
+    @app.get("/sessions/{session_id}/room")
+    def get_room_scan(session_id: str) -> dict:
+        session = _load_or_404(session_id)
+        try:
+            return app.state.store.load_room_scan(session)
+        except FileNotFoundError:
+            raise HTTPException(404, "Session has no room scan")
+
+    @app.get("/sessions/{session_id}/transcript", response_class=PlainTextResponse)
+    def get_transcript(session_id: str) -> str:
+        session = _load_or_404(session_id)
+        path = app.state.store.session_dir(session.session_id) / "transcript.txt"
+        if not path.exists():
+            raise HTTPException(404, "No transcript for this session")
+        return path.read_text()
+
+    @app.get("/", response_class=HTMLResponse)
+    def console() -> str:
+        return (Path(__file__).parent / "console.html").read_text()
+
+    def _load_or_404(session_id: str):
         try:
             session = app.state.store.load(session_id)
         except ValueError:
             raise HTTPException(400, "Invalid session id")
         if session is None:
             raise HTTPException(404, "Session not found")
-        return session.model_dump(mode="json")
+        return session
 
     return app
 

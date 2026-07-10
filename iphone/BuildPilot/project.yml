@@ -25,4 +25,4 @@ targets:
       base:
         TARGETED_DEVICE_FAMILY: "1"
         SWIFT_VERSION: "5.9"
-        INFOPLIST_KEY_UIUserInterfaceStyle: Light
+        INFOPLIST_KEY_UIUserInterfaceStyle: Dark
