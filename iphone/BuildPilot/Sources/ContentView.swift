@@ -35,8 +35,16 @@ struct ContentView: View {
         case .processing(let stage):
             ProcessingView(stage: stage)
         case .done(let session):
-            EstimateView(session: session, visitName: visit.visitName) {
-                visit.reset()
+            if visit.readbackConfirmed {
+                EstimateView(session: session, visitName: visit.visitName) {
+                    visit.reset()
+                }
+            } else {
+                ReadbackView(
+                    session: session,
+                    onShowQuote: { withAnimation { visit.readbackConfirmed = true } },
+                    onScanAgain: { visit.reset() }
+                )
             }
         case .failed(let message, let canRetry):
             VisitFailedView(

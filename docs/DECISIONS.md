@@ -120,6 +120,26 @@ Companion reliability rules: the app preflights the connection before
 scanning starts, and a failed upload keeps the captured bundle on the phone
 with a Try Again action — a network problem can never destroy a visit.
 
+## Decision 20 — The quote is a sales conversation, not a data dump (2026-07-10)
+
+Three product rules for every customer-facing surface:
+
+1. **Internal pricing is never customer-visible.** The phone's calculation
+   trail shows quantities and coverage only; the margin composition lives
+   exclusively on developer surfaces (Mac console, session JSON). The phone
+   filters the estimator's `Quotation:`/margin lines — the estimator itself
+   is unchanged and remains fully explainable.
+2. **The scope read-back precedes the price.** After processing, the painter
+   first sees "Today we've discussed" — the agreed scope in natural language —
+   ends with "Is there anything else you'd like included before I prepare
+   your quote?", and only then reveals the price. If the conversation wasn't
+   captured, the read-back says so honestly instead of showing a default
+   scope as if it were agreed. Reopening a visit from history skips the
+   read-back (the sales moment already happened).
+3. **The quote carries the painter's identity, not the app's.** Company
+   name, painter name, phone, and email are simple app settings rendered
+   onto the PDF and text quote. No CRM, no customer database.
+
 ## Rationale
 
 These decisions are intended to reduce complexity and increase the likelihood of building a working prototype quickly. The core value proposition is not the scanning technology itself, but the automation of the site visit and the generation of a useful draft estimate.

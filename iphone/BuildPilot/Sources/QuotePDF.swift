@@ -4,10 +4,10 @@ import SwiftUI
 /// (Mail, Messages, WhatsApp, AirDrop, Print, Save to Files).
 @MainActor
 enum QuotePDF {
-    static func render(session: SessionResponse, visitName: String) -> URL? {
+    static func render(session: SessionResponse, visitName: String, identity: BusinessIdentity) -> URL? {
         let pageWidth: CGFloat = 595 // A4 @ 72 dpi
         let renderer = ImageRenderer(
-            content: QuoteDocumentView(session: session, visitName: visitName)
+            content: QuoteDocumentView(session: session, visitName: visitName, identity: identity)
                 .frame(width: pageWidth)
         )
         renderer.proposedSize = ProposedViewSize(width: pageWidth, height: nil)
@@ -37,11 +37,29 @@ enum QuotePDF {
 struct QuoteDocumentView: View {
     let session: SessionResponse
     let visitName: String
+    let identity: BusinessIdentity
 
     private var estimate: EstimateDraft? { session.estimate }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            // Business identity — the quote comes from a painting company,
+            // not from an app.
+            if !identity.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    if !identity.companyName.isEmpty {
+                        Text(identity.companyName)
+                            .font(.system(size: 17, weight: .semibold))
+                    }
+                    if !identity.contactLine.isEmpty {
+                        Text(identity.contactLine)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.bottom, 14)
+            }
+
             // Header
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 2) {

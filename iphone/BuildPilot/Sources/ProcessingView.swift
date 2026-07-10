@@ -1,7 +1,10 @@
 import SwiftUI
+import UIKit
 
 /// The wait screen after Finish Visit: a calm, honest checklist of what the
 /// system is doing. Three steps, exactly matching what actually happens.
+/// The phone may be lying on the kitchen table — keep it awake so the
+/// upload is never killed by the device sleeping mid-coffee.
 struct ProcessingView: View {
     let stage: VisitController.ProcessingStage
 
@@ -48,6 +51,8 @@ struct ProcessingView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(.systemGroupedBackground))
+        .onAppear { UIApplication.shared.isIdleTimerDisabled = true }
+        .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
     }
 }
 

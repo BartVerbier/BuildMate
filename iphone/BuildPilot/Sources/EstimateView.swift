@@ -107,12 +107,19 @@ struct EstimateView: View {
         Card(title: nil) {
             DisclosureGroup {
                 VStack(alignment: .leading, spacing: 8) {
-                    ForEach(e.assumptions, id: \.self) { line in
+                    // Customer-safe trail: quantities and coverage only.
+                    // Internal pricing (margin) stays on developer surfaces —
+                    // the Mac console and the session record.
+                    ForEach(customerSafeAssumptions(e), id: \.self) { line in
                         Text(line)
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
+                    Text("The total includes labour, materials, travel and VAT.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .padding(.top, 8)
             } label: {
@@ -120,6 +127,12 @@ struct EstimateView: View {
                     .font(.body.weight(.medium))
             }
         }
+    }
+
+    /// Filters the deterministic trail to what the homeowner may see:
+    /// drops the pricing composition line (which itemizes internal margin).
+    private func customerSafeAssumptions(_ e: EstimateDraft) -> [String] {
+        e.assumptions.filter { !$0.hasPrefix("Quotation:") && !$0.lowercased().contains("margin") }
     }
 
     private var advisoryFooter: some View {
@@ -158,7 +171,11 @@ struct EstimateView: View {
     }
 
     private var quoteText: String {
-        var lines = ["Painting Estimate — \(visitName)"]
+        let identity = BusinessIdentity.load()
+        var lines: [String] = []
+        if !identity.companyName.isEmpty { lines.append(identity.companyName) }
+        if !identity.contactLine.isEmpty { lines.append(identity.contactLine) }
+        lines.append("Painting Estimate — \(visitName)")
         if let e = session.estimate {
             lines.append("Suggested price (incl. VAT): \(Format.euro(e.suggestedQuotationEur))")
             lines.append("Labour: \(Format.hours(e.labourHours)) · \(Format.euro(e.labourCostEur))")
@@ -173,7 +190,11 @@ struct EstimateView: View {
     }
 
     private func renderQuote() {
-        quoteURL = QuotePDF.render(session: session, visitName: visitName)
+        quoteURL = QuotePDF.render(
+            session: session,
+            visitName: visitName,
+            identity: BusinessIdentity.load()
+        )
     }
 }
 

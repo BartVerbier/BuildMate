@@ -31,6 +31,9 @@ final class VisitController: ObservableObject {
     }
 
     @Published var phase: Phase = .idle
+    /// True once the painter has done the scope read-back with the customer
+    /// and moved on to the price. Reset for every new visit.
+    @Published var readbackConfirmed = false
     @AppStorage("backendURL") var backendURLString = ""
 
     let roomCapture = RoomCaptureController()
@@ -87,6 +90,7 @@ final class VisitController: ObservableObject {
         visitName = Self.defaultVisitName()
         scanStartedAt = Date()
         pendingBundle = nil
+        readbackConfirmed = false
         roomCapture.start()
         phase = .scanning
     }

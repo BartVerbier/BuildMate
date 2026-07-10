@@ -34,16 +34,23 @@ listed. Manual address entry exists as a fallback under Settings → Advanced.
 ## Screens (dark appearance, green accent)
 
 1. **Visits** — recent visits with their quotes, one primary action:
-   Start New Visit. Settings (Mac address + connection test) behind the gear.
+   Start New Visit. Settings (business identity for the quote + Mac
+   discovery) behind the gear.
 2. **Capture** — Apple's native RoomPlan experience full-bleed, with a live
    recording pill (timer + mic) and a Finish Visit button. Cancel asks
    before discarding.
 3. **Processing** — a calm three-step checklist (room scan, audio, drafting
-   on your Mac).
-4. **Draft Estimate** — the price as hero, then breakdown, room measurements,
-   scope/exclusions/prep/notes, and a collapsible "How this was calculated".
-   **Share Quote** renders a print-styled PDF and opens the native share
-   sheet (Mail, Messages, WhatsApp, AirDrop, Print, Save to Files).
+   on your Mac). The screen stays awake so a phone on the kitchen table
+   never kills the upload.
+4. **Read-back** — the sales moment before the price: "Today we've
+   discussed" lists the agreed scope in the customer's own words and asks
+   "anything else before I prepare your quote?" (Decision 20). Only then:
+5. **Draft Estimate** — the price as hero, then breakdown, room measurements,
+   scope/exclusions/prep/notes, and a customer-safe "How this was calculated"
+   (quantities and coverage — internal pricing never appears on the phone).
+   **Share Quote** renders a print-styled PDF with the painter's business
+   identity and opens the native share sheet (Mail, Messages, WhatsApp,
+   AirDrop, Print, Save to Files).
 
 ## Project layout
 

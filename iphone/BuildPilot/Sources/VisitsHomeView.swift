@@ -113,9 +113,34 @@ struct SettingsSheet: View {
     @State private var selectedOK: Bool?
     @State private var showManualEntry = false
 
+    // Shown on every quote the customer receives. No CRM — just identity.
+    @AppStorage("business.company") private var companyName = ""
+    @AppStorage("business.painter") private var painterName = ""
+    @AppStorage("business.phone") private var businessPhone = ""
+    @AppStorage("business.email") private var businessEmail = ""
+
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    TextField("Company name", text: $companyName)
+                        .textContentType(.organizationName)
+                    TextField("Your name", text: $painterName)
+                        .textContentType(.name)
+                    TextField("Phone", text: $businessPhone)
+                        .textContentType(.telephoneNumber)
+                        .keyboardType(.phonePad)
+                    TextField("Email", text: $businessEmail)
+                        .textContentType(.emailAddress)
+                        .keyboardType(.emailAddress)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                } header: {
+                    Text("Your Business")
+                } footer: {
+                    Text("Shown on every quote you share with a customer.")
+                }
+
                 Section {
                     if discovery.macs.isEmpty {
                         HStack(spacing: 12) {
@@ -161,7 +186,7 @@ struct SettingsSheet: View {
                 }
             }
         }
-        .presentationDetents([.medium])
+        .presentationDetents([.large])
         .onAppear { discovery.start() }
         .onDisappear { discovery.stop() }
     }
