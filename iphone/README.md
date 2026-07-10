@@ -26,10 +26,10 @@ In Xcode: select your development team under Signing & Capabilities, pick
 your iPhone as the destination, and run. The Simulator will not work —
 RoomPlan requires LiDAR hardware.
 
-In the app, set the backend URL on the start screen to your Mac's LAN
-address, e.g. `http://192.168.1.23:8787` (find it via System Settings →
-Wi-Fi → Details, and make sure the backend is running — see
-[backend/README.md](../backend/README.md)).
+Connection is zero-config: run `python -m buildpilot` on the Mac (see
+[backend/README.md](../backend/README.md)) and the app finds it via Bonjour —
+on first Start Visit, or from Settings (gear), where discovered Macs are
+listed. Manual address entry exists as a fallback under Settings → Advanced.
 
 ## Screens (dark appearance, green accent)
 

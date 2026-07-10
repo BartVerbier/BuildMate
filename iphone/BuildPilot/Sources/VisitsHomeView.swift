@@ -109,37 +109,47 @@ private struct VisitRow: View {
 struct SettingsSheet: View {
     @Binding var backendURLString: String
     @Environment(\.dismiss) private var dismiss
-    @State private var checkResult: Bool?
-    @State private var checking = false
+    @StateObject private var discovery = BackendDiscovery()
+    @State private var selectedOK: Bool?
+    @State private var showManualEntry = false
 
     var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("http://192.168.1.23:8787", text: $backendURLString)
-                        .keyboardType(.URL)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
+                    if discovery.macs.isEmpty {
+                        HStack(spacing: 12) {
+                            ProgressView()
+                            Text("Looking for your Mac…")
+                                .foregroundStyle(.secondary)
+                        }
+                    } else {
+                        ForEach(discovery.macs) { mac in
+                            Button {
+                                Task { await select(mac) }
+                            } label: {
+                                HStack {
+                                    Label(mac.name, systemImage: "desktopcomputer")
+                                        .foregroundStyle(.primary)
+                                    Spacer()
+                                    connectionBadge
+                                }
+                            }
+                        }
+                    }
                 } header: {
-                    Text("Mac Address")
+                    Text("Your Mac")
                 } footer: {
-                    Text("Your Mac runs the Build Pilot backend on the same Wi-Fi network. Find its address in System Settings → Wi-Fi → Details.")
+                    Text("Open Build Pilot on your Mac and it appears here automatically. Both devices must be on the same Wi-Fi.")
                 }
 
                 Section {
-                    Button {
-                        Task { await testConnection() }
-                    } label: {
-                        HStack {
-                            Text("Test Connection")
-                            Spacer()
-                            if checking {
-                                ProgressView()
-                            } else if let ok = checkResult {
-                                Image(systemName: ok ? "checkmark.circle.fill" : "xmark.circle.fill")
-                                    .foregroundStyle(ok ? .green : .red)
-                            }
-                        }
+                    DisclosureGroup("Enter address manually", isExpanded: $showManualEntry) {
+                        TextField("http://192.168.1.23:8787", text: $backendURLString)
+                            .keyboardType(.URL)
+                            .autocorrectionDisabled()
+                            .textInputAutocapitalization(.never)
+                            .onSubmit { Task { await verifyCurrent() } }
                     }
                 }
             }
@@ -152,22 +162,33 @@ struct SettingsSheet: View {
             }
         }
         .presentationDetents([.medium])
+        .onAppear { discovery.start() }
+        .onDisappear { discovery.stop() }
     }
 
-    private func testConnection() async {
-        checking = true
-        defer { checking = false }
-        guard let url = URL(string: backendURLString)?.appendingPathComponent("health") else {
-            checkResult = false
+    @ViewBuilder
+    private var connectionBadge: some View {
+        if let ok = selectedOK {
+            Image(systemName: ok ? "checkmark.circle.fill" : "xmark.circle.fill")
+                .foregroundStyle(ok ? .green : .red)
+        }
+    }
+
+    private func select(_ mac: BackendDiscovery.DiscoveredMac) async {
+        selectedOK = nil
+        guard let url = await BackendDiscovery.resolve(mac) else {
+            selectedOK = false
             return
         }
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 5
-        do {
-            let (_, response) = try await URLSession.shared.data(for: request)
-            checkResult = (response as? HTTPURLResponse)?.statusCode == 200
-        } catch {
-            checkResult = false
+        backendURLString = url.absoluteString
+        await verifyCurrent()
+    }
+
+    private func verifyCurrent() async {
+        guard let url = URL(string: backendURLString) else {
+            selectedOK = false
+            return
         }
+        selectedOK = await VisitController.isReachable(url)
     }
 }

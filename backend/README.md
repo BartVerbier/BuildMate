@@ -28,10 +28,13 @@ the default paint scope.
 
 ```bash
 cd backend
-../.venv/bin/python -m uvicorn buildpilot.server:app --host 0.0.0.0 --port 8787
+../.venv/bin/python -m buildpilot
 ```
 
-`--host 0.0.0.0` makes it reachable from the iPhone on the same Wi-Fi.
+This serves on port 8787 and advertises the backend on the local network via
+Bonjour (`_buildpilot._tcp`, using macOS's built-in `dns-sd`), so the iPhone
+app finds this Mac automatically — no IP addresses to type. Options:
+`--port`, `--host`.
 
 ## Mac console
 

@@ -28,6 +28,8 @@ struct ContentView: View {
         switch visit.phase {
         case .idle:
             EmptyView()
+        case .connecting:
+            ConnectingView()
         case .scanning:
             CaptureVisitView(visit: visit)
         case .processing(let stage):
@@ -36,40 +38,71 @@ struct ContentView: View {
             EstimateView(session: session, visitName: visit.visitName) {
                 visit.reset()
             }
-        case .failed(let message):
-            VisitFailedView(message: message) { visit.reset() }
+        case .failed(let message, let canRetry):
+            VisitFailedView(
+                message: message,
+                onRetry: canRetry ? { Task { await visit.retryUpload() } } : nil,
+                onDismiss: { visit.reset() }
+            )
         }
+    }
+}
+
+/// Brief preflight while the app finds and checks the Mac.
+struct ConnectingView: View {
+    var body: some View {
+        VStack(spacing: 16) {
+            ProgressView()
+                .controlSize(.large)
+            Text("Connecting to your Mac…")
+                .font(.headline)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(.systemGroupedBackground))
     }
 }
 
 struct VisitFailedView: View {
     let message: String
+    let onRetry: (() -> Void)?
     let onDismiss: () -> Void
 
     var body: some View {
         VStack(spacing: 16) {
             Spacer()
-            Image(systemName: "exclamationmark.triangle.fill")
+            Image(systemName: onRetry != nil ? "wifi.exclamationmark" : "exclamationmark.triangle.fill")
                 .font(.system(size: 44))
                 .foregroundStyle(.orange)
                 .accessibilityHidden(true)
-            Text("Visit Failed")
+            Text(onRetry != nil ? "Couldn't Send to Your Mac" : "Something Went Wrong")
                 .font(.title2.bold())
+                .multilineTextAlignment(.center)
             Text(message)
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 32)
             Spacer()
-            Button(action: onDismiss) {
-                Text("Back to Visits")
-                    .font(.headline)
-                    .frame(maxWidth: .infinity, minHeight: 44)
+            VStack(spacing: 10) {
+                if let onRetry {
+                    Button(action: onRetry) {
+                        Label("Try Again", systemImage: "arrow.clockwise")
+                            .font(.title3.weight(.semibold))
+                            .frame(maxWidth: .infinity, minHeight: 56)
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+                Button(action: onDismiss) {
+                    Text(onRetry != nil ? "Discard Visit" : "Back to Visits")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.bordered)
+                .tint(onRetry != nil ? .red : .green)
             }
-            .buttonStyle(.bordered)
             .padding(.horizontal, 24)
             .padding(.bottom, 16)
         }
-        .background(Color(.systemBackground))
+        .background(Color(.systemGroupedBackground))
     }
 }

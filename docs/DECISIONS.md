@@ -110,6 +110,16 @@ The iPhone renders the draft quote to a light, print-styled PDF (SwiftUI
 Apple's native share sheet provides Mail, Messages, WhatsApp, AirDrop,
 Print, and Save to Files with no custom sharing code.
 
+## Decision 19 — Zero-config connection via Bonjour (2026-07-10)
+
+The backend advertises `_buildpilot._tcp` on the local network (macOS's
+built-in `dns-sd`, no dependencies); the iPhone discovers it with
+`NWBrowser` and resolves the address automatically. A painter never types
+an IP address. Manual entry remains available in Settings as a fallback.
+Companion reliability rules: the app preflights the connection before
+scanning starts, and a failed upload keeps the captured bundle on the phone
+with a Try Again action — a network problem can never destroy a visit.
+
 ## Rationale
 
 These decisions are intended to reduce complexity and increase the likelihood of building a working prototype quickly. The core value proposition is not the scanning technology itself, but the automation of the site visit and the generation of a useful draft estimate.

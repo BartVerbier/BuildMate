@@ -25,10 +25,14 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_buildpilot._tcp</string>
+	</array>
 	<key>NSCameraUsageDescription</key>
 	<string>Build Pilot scans the room with the camera and LiDAR to measure it.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Build Pilot sends the captured visit to your Mac on the local network.</string>
+	<string>Build Pilot finds your Mac on the local network and sends the captured visit to it.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Build Pilot records the visit conversation to draft the estimate.</string>
 	<key>UILaunchScreen</key>

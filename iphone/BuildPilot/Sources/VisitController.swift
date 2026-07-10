@@ -2,6 +2,11 @@ import Foundation
 import SwiftUI
 
 /// The visit state machine: idle → scanning → processing → estimate/failed.
+///
+/// Reliability rules for real-world use:
+/// - Never let a painter start scanning into a dead connection (preflight).
+/// - Never lose a captured visit to a network blip (bundle kept, Try Again).
+/// - Never show a technical error (all failures in painter language).
 @MainActor
 final class VisitController: ObservableObject {
     enum ProcessingStage: Int, Comparable {
@@ -13,10 +18,11 @@ final class VisitController: ObservableObject {
 
     enum Phase {
         case idle
+        case connecting // preflight before scanning starts
         case scanning
         case processing(ProcessingStage)
         case done(SessionResponse)
-        case failed(String)
+        case failed(message: String, canRetry: Bool)
 
         var isActiveVisit: Bool {
             if case .idle = self { return false }
@@ -25,7 +31,7 @@ final class VisitController: ObservableObject {
     }
 
     @Published var phase: Phase = .idle
-    @AppStorage("backendURL") var backendURLString = "http://192.168.1.100:8787"
+    @AppStorage("backendURL") var backendURLString = ""
 
     let roomCapture = RoomCaptureController()
     let history = VisitHistoryStore()
@@ -33,30 +39,54 @@ final class VisitController: ObservableObject {
 
     private(set) var visitName = ""
     private(set) var scanStartedAt: Date?
+    private var pendingBundle: (roomJSON: Data, audioFile: URL?)?
 
     var deviceSupported: Bool { RoomCaptureController.isSupported }
 
+    // MARK: - visit lifecycle
+
     func startVisit() async {
         guard deviceSupported else {
-            phase = .failed("This device does not support RoomPlan — a LiDAR-equipped iPhone is required.")
+            phase = .failed(
+                message: "This iPhone can't scan rooms — a Pro model with LiDAR is required.",
+                canRetry: false
+            )
             return
         }
-        guard URL(string: backendURLString) != nil else {
-            phase = .failed("The Mac address in Settings is not a valid URL.")
+
+        phase = .connecting
+        guard let backendURL = await locateBackend() else {
+            phase = .failed(
+                message: "Couldn't find your Mac on this Wi-Fi.\n\nMake sure the Mac is awake, on the same network, and running Build Pilot. Then try again — or pick your Mac in Settings (the gear on the Visits screen).",
+                canRetry: false
+            )
             return
         }
+        guard await Self.isReachable(backendURL) else {
+            phase = .failed(
+                message: "Your Mac was found but isn't answering.\n\nCheck that Build Pilot is running on it, then try again.",
+                canRetry: false
+            )
+            return
+        }
+
         guard await audioRecorder.requestPermission() else {
-            phase = .failed("Build Pilot needs the microphone to record the visit conversation. Enable it in Settings → Privacy.")
+            phase = .failed(
+                message: "Build Pilot needs the microphone to record the visit conversation.\n\nAllow it in iPhone Settings → Privacy → Microphone.",
+                canRetry: false
+            )
             return
         }
         do {
             try audioRecorder.start()
         } catch {
-            phase = .failed("Could not start audio recording: \(error.localizedDescription)")
+            phase = .failed(message: "Audio recording couldn't start. Close other apps using the microphone and try again.", canRetry: false)
             return
         }
+
         visitName = Self.defaultVisitName()
         scanStartedAt = Date()
+        pendingBundle = nil
         roomCapture.start()
         phase = .scanning
     }
@@ -71,9 +101,13 @@ final class VisitController: ObservableObject {
                 guard let self else { return }
                 switch result {
                 case .success(let roomJSON):
-                    await self.uploadBundle(roomJSON: roomJSON, audioFile: audioFile)
-                case .failure(let error):
-                    self.phase = .failed("Room scan failed: \(error.localizedDescription)")
+                    self.pendingBundle = (roomJSON, audioFile)
+                    await self.uploadPendingBundle()
+                case .failure:
+                    self.phase = .failed(
+                        message: "The room scan couldn't be completed. Walk the room again, keeping every wall in view.",
+                        canRetry: false
+                    )
                 }
             }
         }
@@ -89,29 +123,77 @@ final class VisitController: ObservableObject {
         phase = .idle
     }
 
+    /// Re-sends the captured bundle after a failed upload — the scan and
+    /// audio are never lost to a network problem.
+    func retryUpload() async {
+        guard pendingBundle != nil else { return }
+        await uploadPendingBundle()
+    }
+
     func reset() {
         scanStartedAt = nil
         phase = .idle
     }
 
-    private func uploadBundle(roomJSON: Data, audioFile: URL?) async {
-        guard let url = URL(string: backendURLString) else {
-            phase = .failed("The Mac address in Settings is not a valid URL.")
+    // MARK: - backend
+
+    /// Returns the configured backend if set; otherwise discovers one on the
+    /// network (zero-config first run) and remembers it.
+    private func locateBackend() async -> URL? {
+        if let url = URL(string: backendURLString), !backendURLString.isEmpty {
+            return url
+        }
+        if let discovered = await BackendDiscovery.quickFind() {
+            backendURLString = discovered.absoluteString
+            return discovered
+        }
+        return nil
+    }
+
+    static func isReachable(_ backendURL: URL) async -> Bool {
+        var request = URLRequest(url: backendURL.appendingPathComponent("health"))
+        request.timeoutInterval = 3
+        guard let (_, response) = try? await URLSession.shared.data(for: request) else { return false }
+        return (response as? HTTPURLResponse)?.statusCode == 200
+    }
+
+    private func uploadPendingBundle() async {
+        guard let bundle = pendingBundle, let url = URL(string: backendURLString) else {
+            phase = .failed(message: "No Mac is configured. Pick your Mac in Settings and try again.", canRetry: false)
             return
         }
         phase = .processing(.drafting)
         do {
             let session = try await SessionUploader(backendURL: url)
-                .upload(roomScan: roomJSON, audioFile: audioFile)
+                .upload(roomScan: bundle.roomJSON, audioFile: bundle.audioFile)
             if session.status == "completed" {
+                pendingBundle = nil
                 history.add(name: visitName, session: session)
                 phase = .done(session)
             } else {
-                let detail = session.rawMetadata?["error"] ?? "processing failed"
-                phase = .failed("Your Mac could not process the visit: \(detail)")
+                pendingBundle = nil // the Mac rejected the scan; retrying won't help
+                phase = .failed(
+                    message: "Your Mac couldn't measure this scan. Walk the room again, keeping every wall in view.",
+                    canRetry: false
+                )
             }
         } catch {
-            phase = .failed(error.localizedDescription)
+            phase = .failed(message: Self.friendlyUploadError(error), canRetry: true)
+        }
+    }
+
+    private static func friendlyUploadError(_ error: Error) -> String {
+        let base = "The visit is saved on this iPhone — nothing is lost."
+        guard let urlError = error as? URLError else {
+            return "Sending to your Mac failed. \(base)\n\nTry again in a moment."
+        }
+        switch urlError.code {
+        case .timedOut:
+            return "Your Mac is taking too long to answer. \(base)\n\nCheck the Mac is awake, then try again."
+        case .cannotConnectToHost, .cannotFindHost, .networkConnectionLost, .notConnectedToInternet:
+            return "Your Mac couldn't be reached. \(base)\n\nCheck both devices are on the same Wi-Fi, then try again."
+        default:
+            return "Sending to your Mac failed. \(base)\n\nTry again in a moment."
         }
     }
 

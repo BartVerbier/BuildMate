@@ -70,7 +70,7 @@ struct QuoteDocumentView: View {
                         .font(.system(size: 30, weight: .bold, design: .rounded))
                 }
                 .padding(.vertical, 14)
-                Text("Includes labour, materials, travel, margin, and VAT.")
+                Text("Includes labour, materials, travel and VAT.")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .padding(.bottom, 16)

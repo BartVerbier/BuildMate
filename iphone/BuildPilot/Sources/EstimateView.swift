@@ -56,7 +56,7 @@ struct EstimateView: View {
                 .foregroundStyle(.green)
                 .minimumScaleFactor(0.5)
                 .lineLimit(1)
-            Text("Suggested quotation · incl. margin and VAT")
+            Text("Suggested price · incl. VAT")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
@@ -131,25 +131,45 @@ struct EstimateView: View {
     }
 
     private var shareBar: some View {
-        HStack(spacing: 12) {
+        Group {
             if let quoteURL {
                 ShareLink(item: quoteURL, preview: SharePreview(visitName)) {
-                    Label("Share Quote", systemImage: "square.and.arrow.up")
-                        .font(.title3.weight(.semibold))
-                        .frame(maxWidth: .infinity, minHeight: 56)
+                    shareLabel
                 }
-                .buttonStyle(.borderedProminent)
             } else {
-                Label("Share Quote", systemImage: "square.and.arrow.up")
-                    .font(.title3.weight(.semibold))
-                    .frame(maxWidth: .infinity, minHeight: 56)
-                    .foregroundStyle(.secondary)
+                // PDF rendering failed — share a plain-text quote instead,
+                // so the painter is never blocked.
+                ShareLink(item: quoteText) {
+                    shareLabel
+                }
             }
         }
+        .buttonStyle(.borderedProminent)
         .padding(.horizontal, 20)
         .padding(.top, 8)
         .padding(.bottom, 4)
         .background(.bar)
+    }
+
+    private var shareLabel: some View {
+        Label("Share Quote", systemImage: "square.and.arrow.up")
+            .font(.title3.weight(.semibold))
+            .frame(maxWidth: .infinity, minHeight: 56)
+    }
+
+    private var quoteText: String {
+        var lines = ["Painting Estimate — \(visitName)"]
+        if let e = session.estimate {
+            lines.append("Suggested price (incl. VAT): \(Format.euro(e.suggestedQuotationEur))")
+            lines.append("Labour: \(Format.hours(e.labourHours)) · \(Format.euro(e.labourCostEur))")
+            lines.append("Materials: \(Format.euro(e.materialCostEur))")
+            lines.append("Paint: \(Format.litres(e.paintQuantityLitres)) · Primer: \(Format.litres(e.primerQuantityLitres))")
+        }
+        if let r = session.requirements, !r.scopeOfWork.isEmpty {
+            lines.append("Scope: " + r.scopeOfWork.joined(separator: "; "))
+        }
+        lines.append("Draft estimate — subject to final review.")
+        return lines.joined(separator: "\n")
     }
 
     private func renderQuote() {
