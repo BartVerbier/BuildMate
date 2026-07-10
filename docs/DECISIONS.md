@@ -60,6 +60,37 @@ planned as local Whisper on the Mac (zero API cost, audio never leaves the
 machine). Requirements extraction is one small LLM call per visit.
 Measurement and estimation are deterministic and must never be AI.
 
+## Decision 13 — Estimator rounding rules (2026-07-10)
+
+Paint and primer quantities round UP to the nearest 0.5 L; labour hours
+round UP to the nearest 0.25 h; money rounds HALF-UP to 2 decimal places
+using decimal arithmetic, applied at each cost line. Every estimate carries
+an `assumptions` list documenting each calculation step.
+
+## Decision 14 — Synchronous processing over the local network (2026-07-10)
+
+`POST /sessions` runs the whole pipeline in the request and returns the
+finished session. One painter, one phone, one Mac — a job queue would be
+over-engineering. The session directory persists every artifact, so a
+dropped connection is recovered with `GET /sessions/{id}`. Revisit when
+there is more than one concurrent user.
+
+## Decision 15 — Audio decoding via afconvert, not ffmpeg (2026-07-10)
+
+mlx-whisper's file loader shells out to ffmpeg; instead we decode m4a to
+16 kHz mono with macOS's built-in `afconvert` and hand Whisper the raw
+samples. One fewer third-party dependency, Apple-native, and the formats we
+receive come from AVFoundation anyway.
+
+## Decision 16 — Requirements extraction via Claude structured outputs (2026-07-10)
+
+The extractor uses `messages.parse()` with the Pydantic schema so the LLM
+output is validated data, never free text. Default model `claude-opus-4-8`,
+overridable via `BUILDPILOT_EXTRACTOR_MODEL` (e.g. `claude-haiku-4-5` for
+lower cost). Missing credentials, empty transcripts, or API failures degrade
+to the default paint scope with an explicit note — the pipeline always
+completes and the painter always reviews.
+
 ## Rationale
 
 These decisions are intended to reduce complexity and increase the likelihood of building a working prototype quickly. The core value proposition is not the scanning technology itself, but the automation of the site visit and the generation of a useful draft estimate.

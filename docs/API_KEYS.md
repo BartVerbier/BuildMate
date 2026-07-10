@@ -2,34 +2,35 @@
 
 ## Overview
 
-Build Pilot is intended to be local-first for V1. That means the initial version should not depend on a cloud-hosted production stack or a large number of external service credentials.
+Build Pilot is local-first. Exactly one external service is used in V1:
+the Anthropic API, for requirements extraction — one small call per visit.
+Everything else (measurement, transcription, estimation) runs locally at
+zero API cost.
 
-## Current Position
+## Required key
 
-- No production API keys are required for the initial local prototype.
-- Optional AI providers may be used later for transcription, summarization, or estimation support.
-- Any future provider integration should be implemented through a modular abstraction so the system can swap providers without changing the core workflow.
+| Variable | Used by | Notes |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | Requirements extractor | Optional — without it the pipeline degrades to the default paint scope and notes it on the estimate. Get a key at console.anthropic.com. |
 
-## Recommended Practice
+Set it in the shell that runs the backend:
 
-If an external AI provider is introduced in a later phase:
-- store secrets in local environment files only
-- never commit keys to the repository
-- keep provider-specific configuration isolated from core application logic
-- document required variables clearly in the local setup process
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+cd backend && ../.venv/bin/python -m uvicorn buildpilot.server:app --host 0.0.0.0 --port 8787
+```
 
-## Suggested Environment Variables
+## Related configuration
 
-The following names are proposed for future use:
-- OPENAI_API_KEY
-- ANTHROPIC_API_KEY
-- AI_PROVIDER
-- AI_MODEL
+- `BUILDPILOT_EXTRACTOR_MODEL` — defaults to `claude-opus-4-8`; set
+  `claude-haiku-4-5` to reduce per-visit cost.
+- `BUILDPILOT_WHISPER_MODEL` — local model choice; no key needed
+  (weights download from Hugging Face on first use and are cached).
 
-These values should be kept out of source control and should only be used in local development until the product is ready for a more formal deployment approach.
+## Security notes
 
-## Security Notes
-
-- Do not hard-code API keys into source files.
-- Use local environment files or secure developer key storage.
-- Review any future cloud integrations carefully before enabling them in shared environments.
+- Never commit keys; `.env*` is gitignored.
+- The visit audio never leaves the Mac — only the transcript text is sent
+  to the extraction API (docs/DECISIONS.md, Decision 12).
+- Keep provider-specific code isolated in
+  `backend/buildpilot/pipelines/extraction.py` so the provider can be swapped.

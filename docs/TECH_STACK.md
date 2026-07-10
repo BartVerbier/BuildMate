@@ -8,11 +8,12 @@ This document defines the initial technology direction for Build Pilot. It is a 
 
 ### iPhone Application
 - SwiftUI for the user interface
-- ARKit and RoomPlan for room capture and measurement
-- LiDAR support where available on compatible devices
-- RealityKit only where spatial visualization is genuinely needed
-- AVFoundation for microphone capture and audio handling
-- Core Motion and device sensors where they improve capture quality
+- RoomPlan (`RoomCaptureView` / `RoomCaptureSession`) for room capture —
+  RoomPlan owns ARKit, LiDAR, and the camera; nothing custom is layered on it
+- AVFoundation (`AVAudioRecorder`) for visit audio (AAC mono m4a)
+- XcodeGen for project generation (`project.yml` is committed; the
+  `.xcodeproj` is generated)
+- iOS 17.0+ deployment target; LiDAR-capable device required
 
 ### Local Processing Backend
 - Python 3.12+ for the local service running on the founder's Mac (developed on 3.14)
@@ -23,8 +24,12 @@ This document defines the initial technology direction for Build Pilot. It is a 
 
 ### AI and Reasoning Layer
 AI is bounded to exactly two pipeline stages (docs/DECISIONS.md, Decision 12):
-- Transcription: local Whisper on the Mac (`mlx-whisper` on Apple Silicon; `whisper.cpp` as alternative) — zero API cost, audio never leaves the machine
-- Requirements extraction: one small LLM call per visit behind a narrow adapter, so the provider can be swapped
+- Transcription: `mlx-whisper` locally on the Mac (Apple Silicon), audio
+  decoded via macOS `afconvert` (Decision 15) — zero API cost, audio never
+  leaves the machine
+- Requirements extraction: one Claude call per visit via the `anthropic`
+  SDK with structured outputs (Decision 16); provider code isolated in
+  `pipelines/extraction.py`
 - Measurement and estimation are deterministic Python and never use AI
 
 ### Tooling and Delivery

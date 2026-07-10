@@ -8,25 +8,57 @@ scan and visit audio into a draft estimate.
 ```bash
 cd backend
 python3 -m venv ../.venv          # or reuse the existing repo venv
-../.venv/bin/pip install -e ".[dev]"
+../.venv/bin/pip install -e ".[dev,whisper]"
+```
+
+The `whisper` extra installs MLX Whisper (Apple Silicon). Without it the
+pipeline still runs — transcription degrades gracefully and the estimate uses
+the default paint scope.
+
+## Configuration (environment variables, all optional)
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | — | Enables the requirements extractor (the only paid AI call, one per visit). Without it the pipeline degrades to the default paint scope. |
+| `BUILDPILOT_EXTRACTOR_MODEL` | `claude-opus-4-8` | Extractor model (e.g. `claude-haiku-4-5` to cut cost). |
+| `BUILDPILOT_WHISPER_MODEL` | `mlx-community/whisper-base-mlx` | Local Whisper model (downloads from Hugging Face on first use). |
+| `BUILDPILOT_SESSIONS_DIR` | `backend/sessions/` | Where session directories are stored. |
+
+## Run the server
+
+```bash
+cd backend
+../.venv/bin/python -m uvicorn buildpilot.server:app --host 0.0.0.0 --port 8787
+```
+
+`--host 0.0.0.0` makes it reachable from the iPhone on the same Wi-Fi.
+
+## API
+
+- `GET /health` — status + stage availability
+- `POST /sessions` — multipart (`room_scan` JSON, optional `audio` m4a);
+  runs the pipeline synchronously and returns the completed session
+- `GET /sessions/{id}` — re-fetch (recovery after a dropped connection)
+
+Try it without a phone:
+
+```bash
+curl -F "room_scan=@tests/fixtures/synthetic_room_5x3.json" http://localhost:8787/sessions
 ```
 
 ## Run tests
 
 ```bash
 cd backend
-../.venv/bin/python -m pytest
+../.venv/bin/python -m pytest                        # fast suite
+BUILDPILOT_RUN_WHISPER_TESTS=1 ../.venv/bin/python -m pytest   # + real Whisper
 ```
 
 ## Structure
 
-- `buildpilot/models/` — versioned session contract and domain models
-  (metric units, EUR — see docs/DECISIONS.md, Decision 9)
-- `buildpilot/pipelines/` — pipeline stage interfaces
-- `tests/` — contract and validation tests
-
-## Current scope
-
-Milestone 1.5 complete: contract, models, interfaces, packaging, tests.
-No RoomPlan processing, AI integration, or estimation logic yet — those are
-Milestones 2–4.
+- `buildpilot/models/` — versioned session contract (metric, EUR — Decision 9)
+- `buildpilot/pipelines/` — measurement, transcription, extraction, estimator
+- `buildpilot/pipeline.py` — orchestrator with explicit degradation policy
+- `buildpilot/session_store.py` — session-directory storage (Decision 11)
+- `buildpilot/server.py` — FastAPI app
+- `tests/` — 38 tests + gated real-Whisper integration test

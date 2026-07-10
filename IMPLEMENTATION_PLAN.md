@@ -2,8 +2,15 @@
 
 ## Status
 
-Approved implementation roadmap for Build Pilot V1. Work proceeds milestone
-by milestone; each milestone stops for founder review before the next begins.
+**Prototype branch (`prototype-v1`, 2026-07-10):** Milestones 2–5 were built
+end-to-end in a single authorized run. All backend stages are implemented and
+tested (39 tests, incl. a gated real-Whisper integration test); the iPhone
+app compiles for iOS but has not yet run on a
+physical device. Remaining for a live demo: run the app on the founder's
+iPhone against the Mac backend (Milestone 6 field testing), and set
+`ANTHROPIC_API_KEY` to enable requirements extraction.
+
+On the main branch, work proceeds milestone by milestone with founder review.
 
 ## Architecture Summary
 
@@ -49,7 +56,7 @@ Remaining (founder task, requires physical device):
 - capture ≥3 real rooms with Apple's RoomPlan sample app and commit the
   CapturedRoom JSON exports to `samples/rooms/`
 
-### Milestone 2 — Measurement Engine
+### Milestone 2 — Measurement Engine ✅ built (prototype branch)
 
 Objective:
 - Convert CapturedRoom JSON into structured measurements with confidence.
@@ -73,7 +80,7 @@ Definition of Done:
 - structured measurements produced from every sample scan
 - outputs are consistent, explainable, and reviewable
 
-### Milestone 3 — Conversation Understanding
+### Milestone 3 — Conversation Understanding ✅ built (prototype branch)
 
 Objective:
 - Convert the visit conversation into structured requirements.
@@ -92,7 +99,7 @@ Definition of Done:
 - recorded audio produces structured requirements in a stable format
 - low-confidence or empty transcripts are handled gracefully
 
-### Milestone 4 — Deterministic Estimate Generation
+### Milestone 4 — Deterministic Estimate Generation ✅ built (prototype branch)
 
 Objective:
 - Produce a draft estimate from measurements, requirements, and a default
@@ -113,7 +120,7 @@ Definition of Done:
 - a draft estimate is generated from sample data without manual intervention
 - every number in the estimate is explainable from its inputs
 
-### Milestone 5 — iPhone Capture App
+### Milestone 5 — iPhone Capture App ✅ built, ⏳ device-untested (prototype branch)
 
 Objective:
 - The real capture client: Start Visit / Finish Visit.
