@@ -131,7 +131,10 @@ final class BackendDiscovery: ObservableObject {
     nonisolated private static func url(host: NWEndpoint.Host, port: NWEndpoint.Port) -> URL? {
         switch host {
         case .ipv4(let address):
-            return URL(string: "http://\(address):\(port)")
+            // Link-local IPv4 renders with a zone suffix ("169.254.x.x%en2")
+            // which is illegal in a URL — strip it, as the IPv6 case does.
+            let raw = "\(address)".components(separatedBy: "%")[0]
+            return URL(string: "http://\(raw):\(port)")
         case .ipv6(let address):
             // Strip the zone (%en0) — not representable in a URL.
             let raw = "\(address)".components(separatedBy: "%")[0]
