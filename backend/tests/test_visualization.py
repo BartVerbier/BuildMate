@@ -111,11 +111,27 @@ def test_instruction_is_deterministic_and_faithful():
     assert "furniture" in a
 
 
-def test_gemini_visualizer_requires_key(monkeypatch):
+def test_gemini_visualizer_requires_credentials(monkeypatch):
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
     assert GeminiVisualizer.is_available() is False
     try:
         GeminiVisualizer().render(b"\xff\xd8", RequirementExtraction())
         raise AssertionError("expected VisualizationError")
     except VisualizationError as exc:
         assert "GEMINI_API_KEY" in str(exc)
+
+
+def test_vertex_mode_selected_when_project_set(monkeypatch):
+    """With a GCP project configured, the adapter targets Vertex AI and
+    reports missing service-account credentials clearly."""
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
+    monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
+    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "global")
+    assert GeminiVisualizer.is_available() is True
+    GeminiVisualizer._vertex_credentials = None
+    try:
+        GeminiVisualizer().render(b"\xff\xd8", RequirementExtraction())
+        raise AssertionError("expected VisualizationError")
+    except VisualizationError as exc:
+        assert "Vertex credentials" in str(exc) or "google-auth" in str(exc)

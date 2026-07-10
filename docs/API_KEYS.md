@@ -12,7 +12,8 @@ zero API cost.
 | Variable | Used by | Notes |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | Requirements extractor | Optional — without it the pipeline degrades to the default paint scope and notes it on the estimate. Get a key at console.anthropic.com. |
-| `GEMINI_API_KEY` | Proposed-result visualization | Optional — without it the visualization card and PDF section are simply omitted. Get a key at aistudio.google.com. ~$0.04 per rendered image. |
+| `GEMINI_API_KEY` | Proposed-result visualization (Developer API) | Optional — AI Studio *prepay* billing. Get a key at aistudio.google.com. ~$0.04 per rendered image. |
+| `GOOGLE_CLOUD_PROJECT` + `GOOGLE_APPLICATION_CREDENTIALS` | Proposed-result visualization (**Vertex AI** — preferred when set) | Same model, billed to the Google Cloud project, so **GCP trial credits apply**. `GOOGLE_APPLICATION_CREDENTIALS` points at a service-account JSON key (Vertex AI User role); relative paths resolve against `backend/`. Optional `GOOGLE_CLOUD_LOCATION` (default `global`). |
 
 Set it in the shell that runs the backend:
 

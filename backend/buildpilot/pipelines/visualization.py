@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 from buildpilot.models.session import RequirementExtraction
 
 DEFAULT_VISUALIZER_MODEL = "gemini-2.5-flash-image"
-API_ROOT = "https://generativelanguage.googleapis.com/v1beta"
+DEVELOPER_API_ROOT = "https://generativelanguage.googleapis.com/v1beta"
 
 
 class VisualizationError(RuntimeError):
@@ -58,8 +58,18 @@ def build_instruction(requirements: RequirementExtraction) -> str:
 
 
 class GeminiVisualizer:
-    """Hosted image-edit call. Requires GEMINI_API_KEY; model overridable
-    via BUILDPILOT_VISUALIZER_MODEL."""
+    """Hosted image-edit call — same model, two billing doors:
+
+    - Vertex AI (preferred when GOOGLE_CLOUD_PROJECT is set): bills the
+      Google Cloud project, so GCP trial credits apply. Auth via a service
+      account key (GOOGLE_APPLICATION_CREDENTIALS) using google-auth.
+    - Developer API (GEMINI_API_KEY): AI Studio prepay billing.
+
+    Model overridable via BUILDPILOT_VISUALIZER_MODEL; Vertex location via
+    GOOGLE_CLOUD_LOCATION (default "global").
+    """
+
+    _vertex_credentials = None  # cached; refreshed when expired
 
     def __init__(self, model: str | None = None) -> None:
         self.model = model or os.environ.get(
@@ -68,17 +78,68 @@ class GeminiVisualizer:
 
     @staticmethod
     def is_available() -> bool:
-        return bool(os.environ.get("GEMINI_API_KEY"))
+        return bool(
+            os.environ.get("GOOGLE_CLOUD_PROJECT") or os.environ.get("GEMINI_API_KEY")
+        )
 
-    def render(self, photo_jpeg: bytes, requirements: RequirementExtraction) -> bytes:
+    def _endpoint_and_headers(self) -> tuple[str, dict]:
+        project = os.environ.get("GOOGLE_CLOUD_PROJECT")
+        if project:
+            location = os.environ.get("GOOGLE_CLOUD_LOCATION", "global")
+            host = (
+                "aiplatform.googleapis.com"
+                if location == "global"
+                else f"{location}-aiplatform.googleapis.com"
+            )
+            url = (
+                f"https://{host}/v1/projects/{project}/locations/{location}"
+                f"/publishers/google/models/{self.model}:generateContent"
+            )
+            return url, {"Authorization": f"Bearer {self._vertex_token()}"}
+
         api_key = os.environ.get("GEMINI_API_KEY")
         if not api_key:
-            raise VisualizationError("no GEMINI_API_KEY configured")
+            raise VisualizationError(
+                "no GOOGLE_CLOUD_PROJECT or GEMINI_API_KEY configured"
+            )
+        return (
+            f"{DEVELOPER_API_ROOT}/models/{self.model}:generateContent",
+            {"x-goog-api-key": api_key},
+        )
+
+    @classmethod
+    def _vertex_token(cls) -> str:
+        try:
+            import google.auth
+            from google.auth.transport.requests import Request
+        except ImportError as exc:
+            raise VisualizationError("google-auth is not installed") from exc
+        try:
+            if cls._vertex_credentials is None:
+                cls._vertex_credentials, _ = google.auth.default(
+                    scopes=["https://www.googleapis.com/auth/cloud-platform"]
+                )
+            if not cls._vertex_credentials.valid:
+                cls._vertex_credentials.refresh(Request())
+            return cls._vertex_credentials.token
+        except VisualizationError:
+            raise
+        except Exception as exc:
+            raise VisualizationError(
+                f"Vertex credentials unavailable ({type(exc).__name__}): "
+                "check GOOGLE_APPLICATION_CREDENTIALS points at a valid "
+                "service-account key with the Vertex AI User role"
+            ) from None
+
+    def render(self, photo_jpeg: bytes, requirements: RequirementExtraction) -> bytes:
+        url, headers = self._endpoint_and_headers()
 
         instruction = build_instruction(requirements)
         logger.info(
-            "Visualization request: model=%s, photo=%d kB, instruction=%d chars",
-            self.model, len(photo_jpeg) // 1024, len(instruction),
+            "Visualization request: model=%s via %s, photo=%d kB, instruction=%d chars",
+            self.model,
+            "Vertex AI" if os.environ.get("GOOGLE_CLOUD_PROJECT") else "Developer API",
+            len(photo_jpeg) // 1024, len(instruction),
         )
         started = time.perf_counter()
         body = {
@@ -97,14 +158,9 @@ class GeminiVisualizer:
             ]
         }
         try:
-            # API key goes in a header, never in the URL — URLs leak into
+            # Credentials go in headers, never in the URL — URLs leak into
             # exception messages and logs.
-            response = httpx.post(
-                f"{API_ROOT}/models/{self.model}:generateContent",
-                headers={"x-goog-api-key": api_key},
-                json=body,
-                timeout=90,
-            )
+            response = httpx.post(url, headers=headers, json=body, timeout=90)
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
             raise VisualizationError(

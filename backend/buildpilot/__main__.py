@@ -46,6 +46,11 @@ def load_env_file() -> list[str]:
         if key and value and key not in os.environ:
             os.environ[key] = value
             loaded.append(key)
+    # A relative service-account path in .env should resolve against
+    # backend/, not whatever directory the server was launched from.
+    creds = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+    if creds and not Path(creds).is_absolute():
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = str(env_path.parent / creds)
     return loaded
 
 
@@ -123,9 +128,17 @@ def main() -> None:
         logger.warning(
             "No ANTHROPIC_API_KEY set — requirements extraction will degrade to the default paint scope."
         )
-    if not os.environ.get("GEMINI_API_KEY"):
+    if os.environ.get("GOOGLE_CLOUD_PROJECT"):
+        logger.info(
+            "Visualization via Vertex AI (project %s) — bills Google Cloud credits.",
+            os.environ["GOOGLE_CLOUD_PROJECT"],
+        )
+    elif os.environ.get("GEMINI_API_KEY"):
+        logger.info("Visualization via Gemini Developer API (AI Studio prepay billing).")
+    else:
         logger.warning(
-            "No GEMINI_API_KEY set — the proposed-result visualization will be unavailable."
+            "No GOOGLE_CLOUD_PROJECT or GEMINI_API_KEY set — the proposed-result "
+            "visualization will be unavailable."
         )
 
     try:
