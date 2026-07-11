@@ -1,0 +1,16 @@
+# Runtime dependencies for the Railway (Linux) deployment.
+#
+# Why this file exists: Railpack/Nixpacks reliably run `pip install -r
+# requirements.txt`, but do not always install a bare PEP 621 pyproject.toml
+# (that is why the first boot failed with "No module named 'uvicorn'"). This
+# mirrors the runtime dependencies in pyproject.toml. Local development still
+# uses `pip install -e ".[dev]"`; this file is for the cloud build only.
+pydantic>=2.7
+fastapi>=0.115
+uvicorn>=0.30
+python-multipart>=0.0.9
+anthropic>=0.40
+numpy>=1.26
+google-auth>=2.30
+httpx>=0.27
+faster-whisper>=1.0; sys_platform == "linux"
