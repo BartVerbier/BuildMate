@@ -22,9 +22,10 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 
+from buildpilot.auth import auth_enabled, require_token
 from buildpilot.config import DEFAULT_COMPANY_PROFILE
 from buildpilot.pipeline import VisitPipeline
 from buildpilot.pipelines.estimator import DeterministicEstimator
@@ -84,7 +85,14 @@ def create_app(
     store: Optional[SessionStore] = None,
     visualizer=None,
 ) -> FastAPI:
-    app = FastAPI(title="Build Pilot backend", version="0.1.0")
+    # Global bearer-token gate. It applies to every route; the dependency
+    # itself no-ops for /health and when no token is configured (local dev),
+    # so protection is on-by-default for any endpoint added later.
+    app = FastAPI(
+        title="Build Pilot backend",
+        version="0.1.0",
+        dependencies=[Depends(require_token)],
+    )
     app.state.pipeline = pipeline or default_pipeline()
     app.state.store = store or default_store()
     app.state.visualizer = visualizer or GeminiVisualizer()
@@ -93,6 +101,7 @@ def create_app(
     def health() -> dict:
         return {
             "status": "ok",
+            "authentication": "enabled" if auth_enabled() else "disabled",
             "transcriber_available": MlxWhisperTranscriber.is_available(),
             "extractor_credentials_hint": ClaudeRequirementsExtractor.is_available(),
         }
