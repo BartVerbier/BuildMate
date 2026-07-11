@@ -15,12 +15,17 @@ dependencies = [
     "anthropic>=0.40",
     "numpy>=1.26",
     "google-auth>=2.30",
+    # Linux/Railway transcription: pure CPU, decodes audio itself (no ffmpeg
+    # binary). The marker keeps it off the Apple-Silicon Mac, where MLX is
+    # used instead. `pip install .` (what Railway runs) picks the right one.
+    "faster-whisper>=1.0; sys_platform == 'linux'",
 ]
 
 [project.optional-dependencies]
-# MLX requires Apple Silicon; the transcriber degrades gracefully without it.
+# MLX requires Apple Silicon; installed on the Mac via `pip install -e ".[whisper]"`.
+# The marker means this is a no-op on Linux, so Railway never attempts it.
 whisper = [
-    "mlx-whisper>=0.4",
+    "mlx-whisper>=0.4; sys_platform == 'darwin'",
 ]
 dev = [
     "pytest>=8",

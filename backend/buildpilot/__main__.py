@@ -90,18 +90,45 @@ def advertise(port: int) -> subprocess.Popen | None:
 
 
 def warm_up_whisper() -> None:
-    """Background thread: pre-load the Whisper model before the first visit."""
-    from buildpilot.pipelines.transcription import MlxWhisperTranscriber
+    """Background thread: pre-load whichever Whisper backend this host uses."""
+    from buildpilot.pipelines.transcription import select_transcriber
 
-    if not MlxWhisperTranscriber.is_available():
-        logger.warning("mlx-whisper not installed — transcription will degrade")
+    transcriber = select_transcriber()
+    if not hasattr(transcriber, "warm_up") or not type(transcriber).is_available():
+        logger.warning(
+            "No Whisper backend installed (%s) — transcription will degrade to default scope",
+            type(transcriber).__name__,
+        )
         return
     try:
         started = time.perf_counter()
-        MlxWhisperTranscriber().warm_up()
-        logger.info("Whisper warm-up done in %.1fs — first visit will be fast", time.perf_counter() - started)
+        transcriber.warm_up()
+        logger.info(
+            "%s warm-up done in %.1fs — first visit will be fast",
+            type(transcriber).__name__, time.perf_counter() - started,
+        )
     except Exception:  # warm-up must never take the server down
         logger.exception("Whisper warm-up failed — first transcription will be slow")
+
+
+def materialize_google_credentials() -> bool:
+    """Railway has no file upload: if the service-account key is provided as
+    JSON in GOOGLE_APPLICATION_CREDENTIALS_JSON, write it to a temp file and
+    point GOOGLE_APPLICATION_CREDENTIALS at it (what google-auth expects).
+    Local development keeps using the file path directly. Returns True when a
+    credential file was materialized."""
+    import tempfile
+
+    raw = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+    if not raw:
+        return False
+    if os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
+        return False  # an explicit path already wins
+    fd, path = tempfile.mkstemp(prefix="vertex-", suffix=".json")
+    with os.fdopen(fd, "w") as handle:
+        handle.write(raw)
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = path
+    return True
 
 
 def main() -> None:
@@ -121,6 +148,12 @@ def main() -> None:
     logger.info("Console: http://localhost:%d/  ·  Log file: %s", args.port, log_file)
     if loaded_keys:
         logger.info("Loaded from backend/.env: %s", ", ".join(loaded_keys))
+    if materialize_google_credentials():
+        logger.info("Vertex credentials materialized from GOOGLE_APPLICATION_CREDENTIALS_JSON")
+    if os.environ.get("BUILDPILOT_API_TOKEN"):
+        logger.info("Bearer-token authentication ENABLED (public deployment).")
+    else:
+        logger.info("Bearer-token authentication disabled (local development).")
 
     bonjour = advertise(args.port)
     if bonjour:

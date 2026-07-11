@@ -311,6 +311,32 @@ the frame with the highest wall coverage (slightly wider than the work
 area) instead of simply the newest upload. Without poses (older builds)
 every path degrades to the previous behavior.
 
+## Decision 28: Railway deployment shape (2026-07-11)
+
+BuildMate deploys to Railway as a single stateless-ish backend, same codebase
+as local, differing only by environment:
+
+- **Transcription** is swapped by host, not by code: `mlx-whisper` on the Mac,
+  `faster-whisper` (CPU, self-decoding — removes the `afconvert` dependency)
+  on Linux. `pip install .` installs the right one via `sys_platform` markers;
+  `select_transcriber()` chooses at runtime (overridable with
+  `BUILDPILOT_TRANSCRIBER`).
+- **Auth**: `BUILDPILOT_API_TOKEN` set → bearer auth enforced on every
+  endpoint but `/health` (Decision in `auth.py`); unset → open, for local dev.
+- **Vertex credentials**: Railway has no file upload, so a service-account key
+  may be provided as JSON in `GOOGLE_APPLICATION_CREDENTIALS_JSON` and is
+  written to a temp file at boot; alternatively `GEMINI_API_KEY` uses the
+  Developer API with no file. Local keeps using the file path.
+- **Storage stays filesystem** (no database, Decision 11): point
+  `BUILDPILOT_SESSIONS_DIR` at a mounted Railway volume so artifacts survive
+  redeploys. The env var was already honoured — zero code change.
+- **Config**: `backend/railway.toml` (build + start `python -m buildpilot
+  --host 0.0.0.0 --port $PORT`, health check `/health`) and `.python-version`;
+  the Railway service Root Directory is `backend/`.
+- **Workflow**: `main` is the deploy branch Railway watches; `prototype-v1` is
+  the dev branch. The Mac stays the source of truth; the phone falls back to
+  Railway only when no local backend is found.
+
 ## Rationale
 
 These decisions are intended to reduce complexity and increase the likelihood of building a working prototype quickly. The core value proposition is not the scanning technology itself, but the automation of the site visit and the generation of a useful draft estimate.

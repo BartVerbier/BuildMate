@@ -31,7 +31,7 @@ from buildpilot.pipeline import VisitPipeline
 from buildpilot.pipelines.estimator import DeterministicEstimator
 from buildpilot.pipelines.extraction import ClaudeRequirementsExtractor
 from buildpilot.pipelines.measurement import RoomPlanMeasurementEngine
-from buildpilot.pipelines.transcription import MlxWhisperTranscriber
+from buildpilot.pipelines.transcription import MlxWhisperTranscriber, select_transcriber
 from buildpilot.pipelines.visualization import GeminiVisualizer, VisualizationError
 from buildpilot.session_store import POSES_FILE, SessionStore
 
@@ -66,7 +66,7 @@ def _estimate_deltas(old, new) -> list:
 def default_pipeline() -> VisitPipeline:
     return VisitPipeline(
         measurement_engine=RoomPlanMeasurementEngine(),
-        transcriber=MlxWhisperTranscriber(),
+        transcriber=select_transcriber(),  # MLX on the Mac, faster-whisper on Railway
         extractor=ClaudeRequirementsExtractor(),
         estimator=DeterministicEstimator(),
         company_profile=DEFAULT_COMPANY_PROFILE,
@@ -99,10 +99,15 @@ def create_app(
 
     @app.get("/health")
     def health() -> dict:
+        from buildpilot.pipelines.transcription import FasterWhisperTranscriber
+
         return {
             "status": "ok",
             "authentication": "enabled" if auth_enabled() else "disabled",
-            "transcriber_available": MlxWhisperTranscriber.is_available(),
+            "transcriber_available": (
+                MlxWhisperTranscriber.is_available()
+                or FasterWhisperTranscriber.is_available()
+            ),
             "extractor_credentials_hint": ClaudeRequirementsExtractor.is_available(),
         }
 

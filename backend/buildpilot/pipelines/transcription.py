@@ -1,18 +1,30 @@
-"""Local Whisper transcription via MLX (Apple Silicon). Zero API cost.
+"""Local Whisper transcription. Zero API cost; audio never leaves the host.
 
-The visit audio never leaves the Mac (docs/DECISIONS.md, Decision 12).
-Model weights download from Hugging Face on first use and are cached locally.
+Two interchangeable backends behind the same Transcriber protocol:
+
+- MlxWhisperTranscriber — MLX on Apple Silicon (the Mac dev environment).
+  Fast; decodes m4a with macOS's built-in `afconvert`.
+- FasterWhisperTranscriber — CTranslate2 on CPU (Linux / Railway). Decodes
+  audio itself via its bundled PyAV/ffmpeg, so it needs no system binary.
+
+select_transcriber() picks the right one for the host (or honours the
+BUILDPILOT_TRANSCRIBER override), so the deployment target — not the code —
+decides. Model weights download on first use and are cached locally.
 """
 
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 import tempfile
 import wave
 from pathlib import Path
 
+logger = logging.getLogger(__name__)
+
 DEFAULT_WHISPER_MODEL = "mlx-community/whisper-base-mlx"
+DEFAULT_FASTER_WHISPER_MODEL = "base"
 WHISPER_SAMPLE_RATE = 16_000
 
 
@@ -84,6 +96,89 @@ class MlxWhisperTranscriber:
             if (s.get("text") or "").strip()
         ]
         return (result.get("text") or "").strip(), segments
+
+
+class FasterWhisperTranscriber:
+    """Transcribes visit audio with faster-whisper (CTranslate2, CPU).
+
+    The Linux/Railway backend: pure-Python wheels, no Apple Silicon, and it
+    decodes the m4a itself (bundled PyAV), so no `afconvert`/ffmpeg binary is
+    required. The import and the model load are deferred and the model is
+    cached per process — the first visit pays the load, later visits are warm.
+    """
+
+    _model_cache: dict = {}
+
+    def __init__(self, model_name: str | None = None) -> None:
+        self.model_name = model_name or os.environ.get(
+            "BUILDPILOT_WHISPER_MODEL", DEFAULT_FASTER_WHISPER_MODEL
+        )
+
+    @staticmethod
+    def is_available() -> bool:
+        try:
+            import faster_whisper  # noqa: F401
+        except ImportError:
+            return False
+        return True
+
+    def _model(self):
+        if self.model_name not in self._model_cache:
+            from faster_whisper import WhisperModel
+
+            # int8 keeps memory and CPU modest on a small Railway instance.
+            self._model_cache[self.model_name] = WhisperModel(
+                self.model_name, device="cpu", compute_type="int8"
+            )
+        return self._model_cache[self.model_name]
+
+    def warm_up(self) -> None:
+        """Load the model ahead of the first visit (background thread)."""
+        try:
+            self._model()
+        except Exception:  # warm-up must never take the server down
+            logger.exception("faster-whisper warm-up failed — first visit will be slow")
+
+    def transcribe(self, audio_path: Path) -> str:
+        return self.transcribe_segments(audio_path)[0]
+
+    def transcribe_segments(self, audio_path: Path) -> tuple[str, list[dict]]:
+        if not audio_path.exists():
+            raise TranscriptionError(f"Audio file not found: {audio_path}")
+        try:
+            import faster_whisper  # noqa: F401
+        except ImportError as exc:
+            raise TranscriptionError(
+                "faster-whisper is not installed; install it or configure another transcriber"
+            ) from exc
+        segments_iter, _info = self._model().transcribe(str(audio_path))
+        segments = [
+            {"start": float(s.start), "end": float(s.end), "text": s.text.strip()}
+            for s in segments_iter
+            if s.text and s.text.strip()
+        ]
+        text = " ".join(s["text"] for s in segments).strip()
+        return text, segments
+
+
+def select_transcriber():
+    """The transcriber for this host.
+
+    BUILDPILOT_TRANSCRIBER forces a backend ("mlx" or "faster"); otherwise
+    prefer MLX (the Mac dev box), fall back to faster-whisper (Railway). The
+    MLX fallback still raises a clear TranscriptionError when nothing is
+    installed, so the pipeline degrades to the default scope as designed.
+    """
+    forced = (os.environ.get("BUILDPILOT_TRANSCRIBER") or "").strip().lower()
+    if forced == "mlx":
+        return MlxWhisperTranscriber()
+    if forced == "faster":
+        return FasterWhisperTranscriber()
+    if MlxWhisperTranscriber.is_available():
+        return MlxWhisperTranscriber()
+    if FasterWhisperTranscriber.is_available():
+        return FasterWhisperTranscriber()
+    return MlxWhisperTranscriber()
 
 
 def _decode_audio(audio_path: Path):

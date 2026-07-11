@@ -25,8 +25,10 @@ This document defines the initial technology direction for Build Pilot. It is a 
 ### AI and Reasoning Layer
 AI is bounded to exactly two pipeline stages (docs/DECISIONS.md, Decision 12):
 - Transcription: `mlx-whisper` locally on the Mac (Apple Silicon), audio
-  decoded via macOS `afconvert` (Decision 15) — zero API cost, audio never
-  leaves the machine
+  decoded via macOS `afconvert` (Decision 15); on Linux/Railway the same
+  `Transcriber` interface is served by `faster-whisper` (CPU, decodes audio
+  itself — no `afconvert`). `select_transcriber()` picks per host. Zero API
+  cost either way; audio never leaves the machine
 - Requirements extraction: one Claude call per visit via the `anthropic`
   SDK with structured outputs (Decision 16); provider code isolated in
   `pipelines/extraction.py`
