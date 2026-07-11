@@ -30,9 +30,10 @@ struct EstimateView: View {
 
     private var record: VisitRecord? { history.record(for: session.sessionId) }
     private var allPhotos: [VisitPhoto] { record?.photos ?? [] }
-    /// Camera photos only — the AI visualization has its own card.
-    private var photos: [VisitPhoto] { allPhotos.filter { $0.kind != .visualization } }
+    /// Camera photos only — the AI renders have their own card.
+    private var photos: [VisitPhoto] { allPhotos.filter { !$0.kind.isRender } }
     private var visualization: VisitPhoto? { allPhotos.last { $0.kind == .visualization } }
+    private var preparationRender: VisitPhoto? { allPhotos.last { $0.kind == .preparation } }
     /// Live visit: existing condition. Reopened later: completed result.
     private var defaultPhotoKind: PhotoKind { onDone != nil ? .before : .after }
 
@@ -114,13 +115,14 @@ struct EstimateView: View {
                 if let before = bestBefore,
                    let beforeImage = PhotoStore.load(before, visitID: session.sessionId) {
                     transformationImage(beforeImage, label: "TODAY", photo: before)
-                    Image(systemName: "arrow.down")
-                        .font(.title3.weight(.bold))
-                        .foregroundStyle(.yellow)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 2)
+                    stageArrow
                 }
-                transformationImage(vizImage, label: "PROPOSED", photo: visualization)
+                if let prep = preparationRender,
+                   let prepImage = PhotoStore.load(prep, visitID: session.sessionId) {
+                    transformationImage(prepImage, label: "PREPARED", photo: prep)
+                    stageArrow
+                }
+                transformationImage(vizImage, label: "FINISHED", photo: visualization)
                 Text("AI visualization based on your room — final result may vary slightly.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -137,6 +139,14 @@ struct EstimateView: View {
                 .frame(maxWidth: .infinity, minHeight: 44)
             }
         }
+    }
+
+    private var stageArrow: some View {
+        Image(systemName: "arrow.down")
+            .font(.title3.weight(.bold))
+            .foregroundStyle(.yellow)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 2)
     }
 
     private func transformationImage(_ image: UIImage, label: String, photo: VisitPhoto) -> some View {
@@ -156,8 +166,8 @@ struct EstimateView: View {
                     .kerning(0.8)
                     .padding(.horizontal, 9)
                     .padding(.vertical, 4)
-                    .background(label == "PROPOSED" ? Color.yellow : Color.black.opacity(0.55))
-                    .foregroundStyle(label == "PROPOSED" ? .black : .white)
+                    .background(label == "FINISHED" ? Color.yellow : Color.black.opacity(0.55))
+                    .foregroundStyle(label == "FINISHED" ? .black : .white)
                     .clipShape(Capsule())
                     .padding(8)
             }
@@ -325,8 +335,18 @@ struct EstimateView: View {
         if let prep = session.requirements?.preparationRequired, !prep.isEmpty {
             LabeledRow("Preparation", detail: prep.first, value: "Included", symbol: "wrench.and.screwdriver.fill")
         } else {
-            LabeledRow("Preparation", detail: "standard surface prep", value: "Included", symbol: "wrench.and.screwdriver.fill")
+            LabeledRow("Preparation", detail: preparationDetail, value: "Included", symbol: "wrench.and.screwdriver.fill")
         }
+    }
+
+    /// What preparation means in THIS room, from the scan's object counts.
+    private var preparationDetail: String {
+        let movable = session.measurements?.movableObjects ?? 0
+        let fixed = session.measurements?.fixedObjects ?? 0
+        var parts: [String] = []
+        if movable > 0 { parts.append("\(movable) item\(movable == 1 ? "" : "s") moved") }
+        if fixed > 0 { parts.append("\(fixed) protected in place") }
+        return parts.isEmpty ? "standard surface prep" : parts.joined(separator: " · ")
     }
 
     private func measurementsCard(_ m: RoomMeasurement) -> some View {
@@ -337,6 +357,11 @@ struct EstimateView: View {
             LabeledRow("Measurements", value: m.confidenceScore >= 0.6 ? "Good" : "Check the room")
             if m.notes.contains(where: { $0.contains("bounding box") }) {
                 Label("The floor wasn't fully captured — floor and ceiling areas are estimated. Point the camera at the floor during the next scan.", systemImage: "exclamationmark.triangle")
+                    .font(.footnote)
+                    .foregroundStyle(.orange)
+            }
+            if m.notes.contains(where: { $0.contains("uncaptured walls") }) {
+                Label("Some walls weren't captured in the scan — their area has been estimated from the room's shape. Verify the wall measurement, or rescan walking the full perimeter with every wall in view.", systemImage: "exclamationmark.triangle")
                     .font(.footnote)
                     .foregroundStyle(.orange)
             }
@@ -351,7 +376,7 @@ struct EstimateView: View {
                 .lineSpacing(3)
         }
         Card(title: "Scope of Work") {
-            ForEach(WorkPlan.stages(for: r)) { stage in
+            ForEach(WorkPlan.stages(for: r, measurements: session.measurements)) { stage in
                 VStack(alignment: .leading, spacing: 6) {
                     Text(stage.title.uppercased())
                         .font(.caption2.weight(.bold))

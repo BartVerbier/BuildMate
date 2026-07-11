@@ -192,6 +192,11 @@ final class VisitController: ObservableObject {
             history.add(name: visitName, session: result.session, customer: pendingCustomer)
             readbackConfirmed = true // straight back to the quote
             phase = .done(result.session)
+            // The old renders no longer match the revised quote — regenerate
+            // them in the background, exactly like after the original scan.
+            if result.renderRequired {
+                requestRenders(sessionID: session.sessionId, backendURL: url)
+            }
         } catch {
             visitLog.error("Revision failed: \(error.localizedDescription)")
             phase = .failed(
@@ -274,7 +279,6 @@ final class VisitController: ObservableObject {
             }
         }
 
-        visualizationPending = true
         Task { [weak self] in
             let client = HTTPBackendClient(baseURL: backendURL)
             // 1. Archive the Before photos. Reversed: the backend renders
@@ -288,21 +292,38 @@ final class VisitController: ObservableObject {
                     visitLog.warning("Before-photo archive failed: \(error.localizedDescription)")
                 }
             }
-            // 2. Request the proposed-result render.
-            do {
-                let jpeg = try await client.requestVisualization(sessionID: sessionID)
-                await MainActor.run {
+            // 2. Request the AI stage renders.
+            self?.requestRenders(sessionID: sessionID, backendURL: backendURL)
+        }
+    }
+
+    /// Requests the AI stage renders (finished result first — it's the one
+    /// the customer is waiting for — then the preparation view) and saves
+    /// them as visit photos. Best-effort: the estimate is never delayed and
+    /// a failed render simply leaves the previous images in place.
+    private func requestRenders(sessionID: String, backendURL: URL) {
+        visualizationPending = true
+        Task { [weak self] in
+            let client = HTTPBackendClient(baseURL: backendURL)
+            let stages: [(String, PhotoKind)] = [
+                ("finished", .visualization),
+                ("preparation", .preparation),
+            ]
+            for (stage, kind) in stages {
+                do {
+                    let jpeg = try await client.requestVisualization(sessionID: sessionID, stage: stage)
                     guard let self else { return }
                     if let image = UIImage(data: jpeg),
-                       let photo = PhotoStore.save(image, visitID: sessionID, kind: .visualization) {
+                       let photo = PhotoStore.save(image, visitID: sessionID, kind: kind) {
                         self.history.addPhoto(photo, to: sessionID)
-                        visitLog.info("Visualization saved (\(jpeg.count / 1024) kB)")
+                        visitLog.info("Render saved: \(stage) (\(jpeg.count / 1024) kB)")
                     }
-                    self.visualizationPending = false
+                } catch {
+                    visitLog.warning("Render \(stage) unavailable: \(error.localizedDescription)")
                 }
-            } catch {
-                visitLog.warning("Visualization unavailable: \(error.localizedDescription)")
-                await MainActor.run { self?.visualizationPending = false }
+                // The hero image is done (or failed) — stop the spinner; the
+                // preparation view arrives quietly when ready.
+                if stage == "finished" { self?.visualizationPending = false }
             }
         }
     }

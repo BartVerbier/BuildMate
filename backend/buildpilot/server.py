@@ -217,26 +217,18 @@ def create_app(
         store.save(session)
         store.write_artifact(session, "estimate.json", session.estimate.model_dump_json(indent=2))
 
-        # 4. Re-render the visualization from the same reference photo.
+        # 4. The old visualization no longer matches the quote. Rendering
+        #    here would waste a paid image call the phone can never download —
+        #    instead the response tells the phone to re-request renders via
+        #    POST /visualize, the same path as after the original scan.
         photos_dir = session_dir / "photos"
         before_photos = sorted(photos_dir.glob("before-*.jpg")) if photos_dir.exists() else []
-        rendered = False
-        if before_photos:
-            try:
-                image = app.state.visualizer.render(before_photos[-1].read_bytes(), updated)
-                index = len(list(photos_dir.glob("visualization-*.jpg"))) + 1
-                (photos_dir / f"visualization-{index:02d}.jpg").write_bytes(image)
-                rendered = True
-            except VisualizationError as exc:
-                logger_detail = str(exc)[:120]
-                session.raw_metadata["revision_render_error"] = logger_detail
-                store.save(session)
 
         return {
             "session": session.model_dump(mode="json"),
             "changes": changes,
             "version": version + 1,
-            "visualization_updated": rendered,
+            "render_required": bool(before_photos),
         }
 
     @app.get("/sessions/{session_id}/versions")
@@ -269,9 +261,15 @@ def create_app(
         return restored.model_dump(mode="json")
 
     @app.post("/sessions/{session_id}/visualize")
-    def visualize(session_id: str) -> Response:
-        """Renders the AI "proposed result" from the newest archived Before
-        photo + the extracted requirements. Returns image/jpeg."""
+    def visualize(session_id: str, stage: str = "finished") -> Response:
+        """Renders an AI stage image from the newest archived Before photo +
+        the extracted requirements. Returns image/jpeg.
+
+        stage=finished (default): the proposed completed result.
+        stage=preparation: the room professionally prepared for painting.
+        """
+        if stage not in ("finished", "preparation"):
+            raise HTTPException(400, "stage must be 'finished' or 'preparation'")
         session = _load_or_404(session_id)
         if session.requirements is None:
             raise HTTPException(409, "Session has no extracted requirements yet")
@@ -291,13 +289,14 @@ def create_app(
 
         try:
             image = app.state.visualizer.render(
-                before_photos[-1].read_bytes(), session.requirements
+                before_photos[-1].read_bytes(), session.requirements, stage
             )
         except VisualizationError as exc:
             raise HTTPException(503, f"Visualization unavailable: {exc}")
 
-        index = len(list(photos_dir.glob("visualization-*.jpg"))) + 1
-        (photos_dir / f"visualization-{index:02d}.jpg").write_bytes(image)
+        prefix = "visualization" if stage == "finished" else "preparation"
+        index = len(list(photos_dir.glob(f"{prefix}-*.jpg"))) + 1
+        (photos_dir / f"{prefix}-{index:02d}.jpg").write_bytes(image)
         return Response(content=image, media_type="image/jpeg")
 
     @app.get("/sessions/{session_id}/transcript", response_class=PlainTextResponse)

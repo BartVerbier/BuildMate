@@ -21,11 +21,13 @@ struct CompanyProfileInfo: Codable {
 }
 
 /// Result of a customer revision: the updated session plus what changed.
+/// `renderRequired` — the old visualization no longer matches the quote and
+/// the phone should re-request the AI renders (POST /visualize).
 struct RevisionResponse: Codable {
     let session: SessionResponse
     let changes: [String]
     let version: Int
-    let visualizationUpdated: Bool
+    let renderRequired: Bool
 }
 
 struct RoomMeasurement: Codable {
@@ -37,6 +39,9 @@ struct RoomMeasurement: Codable {
     let windowAreaM2: Double
     let paintableSurfaceAreaM2: Double
     let confidenceScore: Double
+    // Optional: absent in visits stored by earlier versions.
+    let fixedObjects: Int?
+    let movableObjects: Int?
     let notes: [String]
 }
 

@@ -73,11 +73,20 @@ struct HTTPBackendClient: BackendClient {
         return try decoder.decode(SessionResponse.self, from: data)
     }
 
-    /// Asks the backend to render the AI "proposed result" visualization
-    /// from the archived Before photo + extracted requirements.
+    /// Asks the backend to render an AI stage image ("finished" proposed
+    /// result, or "preparation" — the room prepared for painting) from the
+    /// archived Before photo + extracted requirements.
     /// Returns JPEG bytes. Slow call (hosted image model) — generous timeout.
-    func requestVisualization(sessionID: String) async throws -> Data {
-        var request = URLRequest(url: baseURL.appendingPathComponent("sessions/\(sessionID)/visualize"))
+    func requestVisualization(sessionID: String, stage: String = "finished") async throws -> Data {
+        var components = URLComponents(
+            url: baseURL.appendingPathComponent("sessions/\(sessionID)/visualize"),
+            resolvingAgainstBaseURL: false
+        )
+        components?.queryItems = [URLQueryItem(name: "stage", value: stage)]
+        guard let url = components?.url else {
+            throw UploadError.badStatus(-1, "invalid visualize URL")
+        }
+        var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.timeoutInterval = 120
         let (data, response) = try await URLSession.shared.data(for: request)

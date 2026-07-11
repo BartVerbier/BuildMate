@@ -58,6 +58,10 @@ class RoomMeasurement(BaseModel):
     window_area_m2: float = Field(ge=0)
     paintable_surface_area_m2: float = Field(ge=0)
     confidence_score: float = Field(ge=0, le=1)
+    # Painter logic (Sprint 6): what gets moved vs protected in place.
+    # Defaults keep sessions saved by earlier versions loading cleanly.
+    fixed_objects: int = Field(default=0, ge=0)
+    movable_objects: int = Field(default=0, ge=0)
     notes: List[str] = Field(default_factory=list)
 
 

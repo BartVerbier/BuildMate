@@ -45,16 +45,17 @@ struct PhotoViewer: View {
                 }
                 if photos.indices.contains(index) {
                     let kind = photos[index].kind
-                    Text(kind == .visualization ? "PROPOSED" : kind.label.uppercased())
+                    Text(kind == .visualization ? "FINISHED"
+                         : kind == .preparation ? "PREPARED" : kind.label.uppercased())
                         .font(.footnote.weight(.bold))
                         .kerning(1.0)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 6)
                         .background(
-                            kind == .visualization ? AnyShapeStyle(Color.yellow) : AnyShapeStyle(.ultraThinMaterial),
+                            kind.isRender ? AnyShapeStyle(Color.yellow) : AnyShapeStyle(.ultraThinMaterial),
                             in: Capsule()
                         )
-                        .foregroundStyle(kind == .visualization ? .black : .white)
+                        .foregroundStyle(kind.isRender ? .black : .white)
                         .id(index) // re-animate on page change
                         .transition(.opacity.combined(with: .scale(scale: 0.9)))
                 }

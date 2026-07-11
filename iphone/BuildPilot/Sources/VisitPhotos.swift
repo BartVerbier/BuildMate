@@ -8,9 +8,12 @@ import UIKit
 enum PhotoKind: String, Codable, CaseIterable, Identifiable {
     case before, progress, after
     case visualization // AI "proposed result" render — never captured by camera
+    case preparation // AI "room prepared for painting" render — also never camera
 
     var id: String { rawValue }
 
+    /// True for AI-rendered stages (never captured by the camera).
+    var isRender: Bool { self == .visualization || self == .preparation }
 
     var label: String {
         switch self {
@@ -18,6 +21,7 @@ enum PhotoKind: String, Codable, CaseIterable, Identifiable {
         case .progress: return "Progress"
         case .after: return "After"
         case .visualization: return "Proposed"
+        case .preparation: return "Prepared"
         }
     }
 }

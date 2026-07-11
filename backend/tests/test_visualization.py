@@ -23,13 +23,17 @@ FAKE_RENDER = b"\xff\xd8\xff\xe0RENDERED"
 
 
 class FakeVisualizer:
-    def render(self, photo_jpeg, requirements):
+    def __init__(self):
+        self.stages = []
+
+    def render(self, photo_jpeg, requirements, stage="finished"):
         assert photo_jpeg.startswith(b"\xff\xd8")
+        self.stages.append(stage)
         return FAKE_RENDER
 
 
 class UnavailableVisualizer:
-    def render(self, photo_jpeg, requirements):
+    def render(self, photo_jpeg, requirements, stage="finished"):
         raise VisualizationError("no GEMINI_API_KEY configured")
 
 
@@ -78,6 +82,21 @@ def test_visualize_refuses_degraded_requirements(tmp_path):
     assert "refusing" in response.json()["detail"]
 
 
+def test_visualize_preparation_stage(tmp_path):
+    """stage=preparation renders the prep view and archives it separately."""
+    visualizer = FakeVisualizer()
+    client, store = make_client(tmp_path, visualizer)
+    session_id = upload(client).json()["session_id"]
+    archive_before_photo(client, session_id)
+
+    response = client.post(f"/sessions/{session_id}/visualize?stage=preparation")
+    assert response.status_code == 200
+    assert visualizer.stages == ["preparation"]
+    assert (store.session_dir(session_id) / "photos" / "preparation-01.jpg").exists()
+
+    assert client.post(f"/sessions/{session_id}/visualize?stage=demolition").status_code == 400
+
+
 def test_visualize_requires_before_photo(tmp_path):
     client, _ = make_client(tmp_path, FakeVisualizer())
     session_id = upload(client).json()["session_id"]
@@ -109,6 +128,20 @@ def test_instruction_is_deterministic_and_faithful():
     assert "Repair the crack above the window" in a
     assert "same room" in a
     assert "furniture" in a
+    # Whole-wall framing rules (Sprint 6): never crop tighter than source.
+    assert "full field of view" in a
+    assert "architectural photography" in a
+
+
+def test_preparation_instruction_is_deterministic():
+    requirements = RequirementExtraction(scope_of_work=["Paint the walls"])
+    a = build_instruction(requirements, "preparation")
+    assert a == build_instruction(requirements, "preparation")
+    assert "dust sheets" in a
+    assert "no new paint" in a.lower()
+    assert "full field of view" in a
+    # Prep view is scope-independent: the room is protected, not painted.
+    assert "Paint the walls" not in a
 
 
 def test_gemini_visualizer_requires_credentials(monkeypatch):

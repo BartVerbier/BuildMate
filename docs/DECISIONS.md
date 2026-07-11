@@ -253,6 +253,32 @@ SceneKit/RealityKit consuming room.json for geometry and per-surface
 requirement mapping — replacing only the Proposed Result card and the
 render adapter, not the capture flow, pipeline, or data model.
 
+## Decision 26: Measurement completes uncaptured walls; renders belong to the phone (2026-07-11)
+
+**Room-closure completion.** Real scans often reconstruct only some walls
+(furniture blocks the LiDAR sweep) — a field scan captured 2 of 4 walls and
+would have quoted half the room. The engine now compares total wall width
+against the floor-polygon perimeter; below 90% coverage it adds the missing
+wall area deterministically (missing perimeter × median wall height), notes
+it ("verify on site"), and caps confidence at 0.55 so the app always shows
+"check the room". Deterministic, hand-computable, tested.
+
+**Low storage is movable.** RoomPlan has no bench/sideboard category — both
+report as "storage" like a built-in wardrobe. Storage under 1.4 m tall is
+treated as movable furniture (no wall deduction); only tall storage is a
+built-in. Erring movable slightly over-counts paintable area — the safe
+direction. The scan's fixed/movable counts are now typed fields on the
+measurement and drive the quotation's preparation wording.
+
+**AI renders are requested by the phone, never pushed.** The revise endpoint
+no longer renders server-side (the phone had no way to download the result —
+the cause of visualizations disappearing after "Make Changes"). Instead it
+returns `render_required` and the phone re-requests renders through POST
+/visualize, the same path as after the original scan. /visualize takes
+`stage=finished|preparation`; the three-stage story (today → prepared &
+protected → finished) appears in the app and the PDF. Visit records preserve
+their photos when a revision replaces the session content.
+
 ## Rationale
 
 These decisions are intended to reduce complexity and increase the likelihood of building a working prototype quickly. The core value proposition is not the scanning technology itself, but the automation of the site visit and the generation of a useful draft estimate.

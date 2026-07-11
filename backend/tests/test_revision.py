@@ -56,6 +56,8 @@ def test_revision_merges_and_reprices(tmp_path):
     assert "Ceiling painting added" in body["changes"]
     assert any(c.startswith("Total +") for c in body["changes"])
     assert body["version"] == 2
+    # No Before photo archived → nothing for the phone to re-render.
+    assert body["render_required"] is False
 
     # Ceiling now included: 37 + 15 = 52 m2 → the original walls-only quote grew
     updated = body["session"]
@@ -71,6 +73,20 @@ def test_revision_merges_and_reprices(tmp_path):
     assert str(original["estimate"]["suggested_quotation_eur"]) in v1.read_text()
     # Revision artifacts archived
     assert (store.session_dir(session_id) / "revision-01.txt").exists()
+
+
+def test_revision_flags_render_when_before_photo_exists(tmp_path):
+    """With a Before photo archived, a revision tells the phone to
+    re-request the AI renders (the old ones no longer match the quote)."""
+    client, _ = make_revision_client(tmp_path)
+    session_id = upload(client).json()["session_id"]
+    client.post(
+        f"/sessions/{session_id}/photos",
+        files={"photo": ("p.jpg", b"\xff\xd8\xff\xe0" + b"room" * 50, "image/jpeg")},
+        data={"kind": "before"},
+    )
+    body = revise(client, session_id).json()
+    assert body["render_required"] is True
 
 
 def test_restore_previous_version(tmp_path):

@@ -123,6 +123,41 @@ def test_fixed_objects_deduct_wall_area_movable_do_not(captured_room):
     assert any("movable furniture" in note for note in result.notes)
 
 
+def test_low_storage_is_movable_furniture(captured_room):
+    """The bench issue (Sprint 6): RoomPlan reports benches and sideboards
+    as "storage". Low storage gets moved like any furniture — the wall
+    behind it stays paintable. Only tall storage is treated as built in."""
+    captured_room["objects"] = [
+        {   # bench against the north wall — real scan reported 1.5 x 0.66 x 0.51
+            "category": {"storage": {}},
+            "dimensions": [1.5, 0.66, 0.51],
+            "transform": [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0.45, 0.33, -1.2, 1]],
+        }
+    ]
+    result = RoomPlanMeasurementEngine().measure(captured_room)
+    assert result.net_wall_area_m2 == 37.0  # no deduction
+    assert result.movable_objects == 1
+    assert result.fixed_objects == 0
+
+
+def test_object_counts_reported(captured_room):
+    captured_room["objects"] = [
+        {   # tall built-in wardrobe: fixed
+            "category": {"storage": {}},
+            "dimensions": [2.0, 2.2, 0.6],
+            "transform": [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0.0, 1.1, -1.15, 1]],
+        },
+        {   # sofa: movable
+            "category": {"sofa": {}},
+            "dimensions": [2.2, 0.9, 0.9],
+            "transform": [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0.0, 0.45, 1.0, 1]],
+        },
+    ]
+    result = RoomPlanMeasurementEngine().measure(captured_room)
+    assert result.fixed_objects == 1
+    assert result.movable_objects == 1
+
+
 def test_fixed_object_away_from_walls_costs_nothing(captured_room):
     captured_room["objects"] = [
         {   # kitchen island in the middle of the room: fixed but not on a wall
@@ -133,6 +168,28 @@ def test_fixed_object_away_from_walls_costs_nothing(captured_room):
     ]
     result = RoomPlanMeasurementEngine().measure(captured_room)
     assert result.net_wall_area_m2 == 37.0
+
+
+def test_incomplete_scan_completes_missing_walls(captured_room):
+    """Room-closure check (Sprint 6): a scan that reconstructs only some
+    walls (furniture blocking them is the common field cause) must not
+    silently quote half the room. Missing wall area is completed from the
+    floor perimeter and flagged."""
+    captured_room["walls"] = captured_room["walls"][:2]  # one 5m + one 3m wall
+    result = RoomPlanMeasurementEngine().measure(captured_room)
+
+    # captured widths 8m of a 16m perimeter → missing 8m x 2.5m = 20 m2
+    # gross 20 + 20 = 40; net 40 − 1.8 − 1.2 = 37 (same as the full room)
+    assert result.gross_wall_area_m2 == 40.0
+    assert result.net_wall_area_m2 == 37.0
+    assert result.confidence_score <= 0.55  # below the app's "Good" threshold
+    assert any("uncaptured walls" in note for note in result.notes)
+
+
+def test_closed_room_is_not_completed(captured_room):
+    """The full fixture closes its perimeter exactly — no completion."""
+    result = RoomPlanMeasurementEngine().measure(captured_room)
+    assert not any("uncaptured walls" in note for note in result.notes)
 
 
 def test_polygon_area_l_shape():

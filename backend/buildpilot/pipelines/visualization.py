@@ -30,8 +30,59 @@ class VisualizationError(RuntimeError):
     """Raised when the render cannot run; callers degrade gracefully."""
 
 
-def build_instruction(requirements: RequirementExtraction) -> str:
-    """Deterministic edit instruction from the typed requirements."""
+# The customer must see the WHOLE work area, not a zoomed-in detail, and it
+# must read as professional architectural photography (Sprint 6, items 2+7).
+_FRAMING_RULES = (
+    "FRAMING: Reproduce the source photograph's full field of view — show the "
+    "complete walls from floor to ceiling exactly as framed in the source. "
+    "Never zoom in, never crop tighter than the source image, never change "
+    "the aspect ratio. Vertical lines — wall corners, door frames, window "
+    "frames — must be perfectly straight and plumb, and the true proportions "
+    "of the room must be preserved. The result must look like professional "
+    "architectural photography: wide, level, perspective-correct, with clean, "
+    "even, natural lighting consistent with the original photo. "
+    "Photorealistic only, no artistic reinterpretation."
+)
+
+_SAME_ROOM_RULES = (
+    "STRICT RULES: This must remain recognisably the exact same room, from "
+    "the identical camera position, angle and perspective. Do not change the "
+    "room layout, walls, windows, doors, or flooring materials."
+)
+
+
+def build_instruction(
+    requirements: RequirementExtraction, stage: str = "finished"
+) -> str:
+    """Deterministic edit instruction from the typed requirements.
+
+    Stages (Sprint 6, item 3):
+    - "finished": the completed result — finishes changed, furniture back.
+    - "preparation": the room professionally prepared for painting —
+      furniture moved and covered, floors protected, masking up, walls
+      still in their ORIGINAL state (nothing painted yet).
+    """
+    if stage == "preparation":
+        lines = [
+            "Edit this photo of a room to show it professionally PREPARED for "
+            "painting work, the way a master painting crew leaves it before "
+            "the first coat:",
+            "- Move all freestanding furniture to the centre of the room and "
+            "cover it completely with clean white dust sheets.",
+            "- Protect the entire floor with taped-down floor protection "
+            "(drop cloths or protection board).",
+            "- Cover built-in units, radiators and window sills with plastic "
+            "sheeting and masking tape; mask edges, sockets and switches "
+            "with painter's tape.",
+            "- Remove all pictures, mirrors, curtains and wall-mounted items "
+            "(including any TV) from the walls.",
+            "- The walls and ceiling keep their CURRENT, unpainted state — "
+            "no new paint anywhere yet.",
+            _SAME_ROOM_RULES,
+            _FRAMING_RULES,
+        ]
+        return "\n".join(lines)
+
     lines = [
         "Edit this photo of a room to show the finished result after "
         "professional painting work. Apply ONLY these changes:"
@@ -47,23 +98,18 @@ def build_instruction(requirements: RequirementExtraction) -> str:
     if not requirements.scope_of_work:
         lines.append("- Freshly repaint the walls in the same or a neutral colour.")
     lines.append(
-        "STRICT RULES: This must remain recognisably the exact same room. "
-        "Do not move, add, or remove furniture or objects. Do not change the "
-        "room layout, windows, doors, or flooring unless explicitly requested. "
-        "Keep the camera angle and perspective identical. Change nothing "
-        "except the finishes listed above."
+        _SAME_ROOM_RULES
+        + " Do not move, add, or remove furniture or objects — everything is "
+        "back in its place. Change nothing except the finishes listed above."
     )
     lines.append(
-        "QUALITY: The result should look professionally photographed and "
-        "professionally executed — clean, even, natural lighting consistent "
-        "with the original photo; true, freshly-painted colours with crisp, "
-        "masked-quality edges along trim, corners and the ceiling line, as if "
-        "finished by master painters. Natural wood, stone, glass, windows, "
-        "radiators and trim keep their original finish unless explicitly "
-        "listed above. Show as much of the painted walls as the original "
-        "frame allows — never crop walls tighter than the source image. "
-        "Photorealistic only, no artistic reinterpretation."
+        "QUALITY: The work must look professionally executed — true, "
+        "freshly-painted colours with crisp, masked-quality edges along trim, "
+        "corners and the ceiling line, as if finished by master painters. "
+        "Natural wood, stone, glass, windows, radiators and trim keep their "
+        "original finish unless explicitly listed above."
     )
+    lines.append(_FRAMING_RULES)
     return "\n".join(lines)
 
 
@@ -141,13 +187,18 @@ class GeminiVisualizer:
                 "service-account key with the Vertex AI User role"
             ) from None
 
-    def render(self, photo_jpeg: bytes, requirements: RequirementExtraction) -> bytes:
+    def render(
+        self,
+        photo_jpeg: bytes,
+        requirements: RequirementExtraction,
+        stage: str = "finished",
+    ) -> bytes:
         url, headers = self._endpoint_and_headers()
 
-        instruction = build_instruction(requirements)
+        instruction = build_instruction(requirements, stage)
         logger.info(
-            "Visualization request: model=%s via %s, photo=%d kB, instruction=%d chars",
-            self.model,
+            "Visualization request: stage=%s, model=%s via %s, photo=%d kB, instruction=%d chars",
+            stage, self.model,
             "Vertex AI" if os.environ.get("GOOGLE_CLOUD_PROJECT") else "Developer API",
             len(photo_jpeg) // 1024, len(instruction),
         )

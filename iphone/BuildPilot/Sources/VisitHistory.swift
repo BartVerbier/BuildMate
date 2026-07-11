@@ -31,12 +31,24 @@ final class VisitHistoryStore: ObservableObject {
     }
 
     func add(name: String, session: SessionResponse, customer: CustomerInfo? = nil) {
-        var record = VisitRecord(id: session.sessionId, name: name, date: Date(), session: session)
+        // Updating an existing visit (e.g. a customer revision) must never
+        // lose what's already attached to it — photos and contact details
+        // carry over; only the session content is replaced.
+        let existing = records.first { $0.id == session.sessionId }
+        var record = VisitRecord(
+            id: session.sessionId, name: name,
+            date: existing?.date ?? Date(), session: session
+        )
+        record.photos = existing?.photos
+        record.customerName = existing?.customerName
+        record.customerAddress = existing?.customerAddress
+        record.customerPhone = existing?.customerPhone
+        record.customerEmail = existing?.customerEmail
         if let customer {
-            record.customerName = customer.name.isEmpty ? nil : customer.name
-            record.customerAddress = customer.address.isEmpty ? nil : customer.address
-            record.customerPhone = customer.phone.isEmpty ? nil : customer.phone
-            record.customerEmail = customer.email.isEmpty ? nil : customer.email
+            record.customerName = customer.name.isEmpty ? record.customerName : customer.name
+            record.customerAddress = customer.address.isEmpty ? record.customerAddress : customer.address
+            record.customerPhone = customer.phone.isEmpty ? record.customerPhone : customer.phone
+            record.customerEmail = customer.email.isEmpty ? record.customerEmail : customer.email
         }
         records.removeAll { $0.id == record.id }
         records.insert(record, at: 0)

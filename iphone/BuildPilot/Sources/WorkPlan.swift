@@ -10,12 +10,12 @@ enum WorkPlan {
         let items: [String]
     }
 
-    static func stages(for requirements: RequirementExtraction) -> [Stage] {
+    static func stages(
+        for requirements: RequirementExtraction,
+        measurements: RoomMeasurement? = nil
+    ) -> [Stage] {
         var result: [Stage] = [
-            Stage(id: "prep", title: "Preparation", items: [
-                "Protect furniture and floors",
-                "Mask edges, sockets and switches",
-            ]),
+            Stage(id: "prep", title: "Preparation", items: preparationItems(measurements)),
         ]
         if !requirements.preparationRequired.isEmpty {
             result.append(Stage(
@@ -29,9 +29,35 @@ enum WorkPlan {
         result.append(Stage(id: "paint", title: "Painting", items: painting))
         result.append(Stage(id: "done", title: "Completion", items: [
             "Remove protection and masking",
+            "Return furniture to its place",
             "Clean and tidy the work area",
         ]))
         return result
+    }
+
+    /// Preparation the customer can picture: what gets moved, what is
+    /// protected in place, what stays untouched — from the scan's own
+    /// fixed/movable object counts when available.
+    private static func preparationItems(_ measurements: RoomMeasurement?) -> [String] {
+        var items: [String] = []
+        let movable = measurements?.movableObjects ?? 0
+        let fixed = measurements?.fixedObjects ?? 0
+        if movable > 0 {
+            items.append(movable == 1
+                ? "Move 1 furniture item to the centre and cover it with dust sheets"
+                : "Move \(movable) furniture items to the centre and cover them with dust sheets")
+        } else {
+            items.append("Move and cover any furniture with dust sheets")
+        }
+        if fixed > 0 {
+            items.append(fixed == 1
+                ? "Protect 1 built-in unit in place — it is not moved"
+                : "Protect \(fixed) built-in units in place — they are not moved")
+        }
+        items.append("Cover and protect the floors")
+        items.append("Take down pictures, curtains and wall fixtures")
+        items.append("Mask edges, sockets and switches")
+        return items
     }
 
     /// Rule-based optional extras — recommendations only, never priced in.

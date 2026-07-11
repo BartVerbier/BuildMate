@@ -32,6 +32,19 @@ FIXED_OBJECT_CATEGORIES = {
 # a professional moves and protects it before painting — no deduction.
 # An object counts as wall-adjacent within this clearance of a wall line.
 WALL_CONTACT_CLEARANCE_M = 0.30
+# RoomPlan has no "bench"/"sideboard" category — it reports them as
+# "storage", same as a built-in wardrobe. Height is the deterministic
+# discriminator: benches/sideboards/dressers are low and get moved;
+# genuine built-ins (wardrobes, fitted cabinetry) are tall. Low storage
+# is therefore movable. Erring movable slightly over-counts paintable
+# area, which is the safe direction for the painter.
+BUILT_IN_STORAGE_MIN_HEIGHT_M = 1.4
+# Room-closure check: a closed room's wall widths should cover its floor
+# perimeter. Real scans (often blocked by furniture) sometimes reconstruct
+# only some walls — quoting from those alone silently halves the job.
+# Below this coverage ratio the engine completes the missing wall area
+# deterministically (missing perimeter x median wall height) and says so.
+WALL_CLOSURE_RATIO = 0.9
 
 
 class MeasurementError(ValueError):
@@ -152,11 +165,14 @@ def _fixed_object_wall_deduction(
         cols = _transform_columns(obj)
         if not category or len(dims) < 3 or cols is None:
             continue
-        if category not in FIXED_OBJECT_CATEGORIES:
+        width, height, depth = float(dims[0]), float(dims[1]), float(dims[2])
+        is_fixed = category in FIXED_OBJECT_CATEGORIES
+        if category == "storage" and height < BUILT_IN_STORAGE_MIN_HEIGHT_M:
+            is_fixed = False  # bench/sideboard height — moved, not built in
+        if not is_fixed:
             movable += 1
             continue
         fixed += 1
-        width, height, depth = float(dims[0]), float(dims[1]), float(dims[2])
         center = (cols[3][0], cols[3][2])
         reach = depth / 2.0 + WALL_CONTACT_CLEARANCE_M
         best = None
@@ -168,6 +184,27 @@ def _fixed_object_wall_deduction(
         if best:
             deduction += best
     return deduction, fixed, movable
+
+
+def _floor_perimeter_m(floors: List[Dict[str, Any]]) -> float:
+    """Perimeter of the scanned floor polygon(s) in metres.
+
+    polygonCorners are 3D points in the floor's local frame; perimeter is
+    invariant under the rigid transform, so local coordinates suffice.
+    """
+    total = 0.0
+    for floor in floors:
+        corners = floor.get("polygonCorners") or []
+        if len(corners) < 3:
+            continue
+        points = [
+            [float(c[0]), float(c[1]), float(c[2]) if len(c) > 2 else 0.0]
+            for c in corners
+        ]
+        for i, p in enumerate(points):
+            q = points[(i + 1) % len(points)]
+            total += sum((a - b) ** 2 for a, b in zip(p, q)) ** 0.5
+    return total
 
 
 def _wall_footprint_bbox_area_m2(walls: List[Dict[str, Any]]) -> float:
@@ -216,6 +253,35 @@ class RoomPlanMeasurementEngine:
                 f"Subtracted {opening_area:.2f} m2 of open doorways from wall area"
             )
 
+        # Room-closure check: complete walls the scan failed to reconstruct.
+        # A closed room's wall widths cover its floor perimeter; a large gap
+        # means missing walls, and quoting only the captured ones would
+        # silently under-measure the job (the real cause of the "furniture
+        # loses wall area" field reports — walls blocked by furniture never
+        # make it into the scan).
+        walls_incomplete = False
+        perimeter = _floor_perimeter_m(floors)
+        wall_width_total = sum(
+            max(float((w.get("dimensions") or [0.0])[0]), 0.0) for w in walls
+        )
+        if perimeter > 0 and wall_width_total < WALL_CLOSURE_RATIO * perimeter:
+            heights = sorted(
+                float(w["dimensions"][1])
+                for w in walls
+                if len(w.get("dimensions") or []) > 1
+            )
+            median_height = heights[len(heights) // 2] if heights else 0.0
+            missing = (perimeter - wall_width_total) * median_height
+            if missing > 0:
+                gross_wall += missing
+                net_wall += missing
+                walls_incomplete = True
+                notes.append(
+                    f"Scan captured {wall_width_total:.1f} m of the {perimeter:.1f} m "
+                    f"room perimeter; added {missing:.2f} m2 of estimated wall area "
+                    "for the uncaptured walls — verify on site"
+                )
+
         # Painter knowledge: walls behind built-ins aren't paintable;
         # movable furniture is moved and protected, so it costs no area.
         objects = captured_room.get("objects") or []
@@ -263,6 +329,10 @@ class RoomPlanMeasurementEngine:
             confidence = UNKNOWN_CONFIDENCE
         if not floors:
             confidence = min(confidence, 0.5)
+        if walls_incomplete:
+            # Below the app's "Good" threshold (0.6): estimated walls always
+            # surface as "check the room", never as a confident measurement.
+            confidence = min(confidence, 0.55)
 
         return RoomMeasurement(
             gross_wall_area_m2=round(gross_wall, 2),
@@ -273,5 +343,7 @@ class RoomPlanMeasurementEngine:
             window_area_m2=round(window_area, 2),
             paintable_surface_area_m2=round(net_wall + ceiling_area, 2),
             confidence_score=round(min(max(confidence, 0.0), 1.0), 2),
+            fixed_objects=fixed_count,
+            movable_objects=movable_count,
             notes=notes,
         )

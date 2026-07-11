@@ -2,9 +2,10 @@ import SwiftUI
 import UIKit
 
 /// Renders the customer quotation as a paginated A4 PDF:
-///   Page 1  — letterhead (logo, company), customer, date, price, breakdown
-///   Page 2  — measurements, scope, notes, calculation basis, terms
-///   Then    — "Existing Condition" (before photos), 4 per page
+///   Page 1  — executive summary: letterhead, customer, the whole quotation
+///             at a glance (areas, paint, labour, materials, VAT, total)
+///   Page 2  — "Your Room": today → prepared & protected → finished result
+///   Page 3  — scope of work, duration, exclusions, pricing, terms
 ///   Then    — "Completed Result" (after photos), only if any exist
 @MainActor
 enum QuotePDF {
@@ -27,10 +28,14 @@ enum QuotePDF {
         ]
         let bestBefore = photos.first { $0.kind == .before }
             .flatMap { PhotoStore.load($0, visitID: visitID) }
+        let preparation = photos.last { $0.kind == .preparation }
+            .flatMap { PhotoStore.load($0, visitID: visitID) }
         let preview = photos.last { $0.kind == .visualization }
             .flatMap { PhotoStore.load($0, visitID: visitID) }
         if bestBefore != nil || preview != nil {
-            pages.append(AnyView(TransformPage(before: bestBefore, preview: preview)))
+            pages.append(AnyView(TransformPage(
+                before: bestBefore, preparation: preparation, preview: preview
+            )))
         }
         pages.append(AnyView(DetailPage(session: session, identity: identity)))
         pages += photoPages(title: "Completed Result",
@@ -219,37 +224,41 @@ private struct SummaryPage: View {
             }
 
             if let e = estimate {
-                // Price block
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(alignment: .firstTextBaseline) {
-                        Text("Total (incl. VAT)")
-                            .font(.system(size: 14, weight: .medium))
-                        Spacer()
-                        Text(Format.euro(e.suggestedQuotationEur))
-                            .font(.system(size: 32, weight: .bold, design: .rounded))
-                    }
-                    if let vat = vatLine(e) {
-                        HStack {
-                            Spacer()
-                            Text(vat).font(.system(size: 10)).foregroundStyle(.secondary)
-                        }
-                    }
+                // Executive summary: the whole quotation at a glance —
+                // areas, quantities, cost lines, then the total.
+                SectionTitle("Your Quotation at a Glance")
+                if let m = session.measurements {
+                    Line("Paintable wall area", Format.squareMetres(m.netWallAreaM2))
+                    Line("Ceiling area", ceilingValue(m))
                 }
-                .padding(.vertical, 14)
-                Divide()
+                Line("Estimated paint required", paintValue(e))
+                Line("Labour (\(Format.hours(e.labourHours)))", Format.euro(e.labourCostEur))
+                Line("Materials", Format.euro(e.materialCostEur))
+                Line("Preparation & protection", preparationValue)
+                if let rate = session.companyProfile?.vatRate, rate > 0 {
+                    let vat = e.suggestedQuotationEur - e.suggestedQuotationEur / (1 + rate)
+                    Line("VAT (\(Int((rate * 100).rounded())) %)", Format.euro(vat))
+                }
+                HStack(alignment: .firstTextBaseline) {
+                    Text("TOTAL (incl. VAT)")
+                        .font(.system(size: 13, weight: .bold))
+                        .kerning(0.4)
+                    Spacer()
+                    Text(Format.euro(e.suggestedQuotationEur))
+                        .font(.system(size: 26, weight: .bold, design: .rounded))
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+                .background(Color(red: 1.0, green: 0.78, blue: 0.05).opacity(0.3))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .padding(.top, 8)
 
                 if let r = session.requirements, r.transcriptAvailable {
-                    SectionTitle("Summary")
+                    SectionTitle("Project Summary")
                     Text(ConversationSummary.sentence(for: r))
                         .font(.system(size: 12.5))
                         .lineSpacing(3)
-                        .padding(.bottom, 4)
-                    if !r.scopeOfWork.isEmpty {
-                        SectionTitle("What's included")
-                        ForEach(r.scopeOfWork.prefix(4), id: \.self) { item in
-                            Text("•  \(item)").font(.system(size: 11.5)).padding(.vertical, 1)
-                        }
-                    }
+                        .padding(.bottom, 2)
                 }
                 Text("The following pages show your room today, the proposed result, and the full scope with pricing.")
                     .font(.system(size: 10))
@@ -270,10 +279,28 @@ private struct SummaryPage: View {
         }
     }
 
-    private func vatLine(_ e: EstimateDraft) -> String? {
-        guard let rate = session.companyProfile?.vatRate, rate > 0 else { return nil }
-        let vatAmount = e.suggestedQuotationEur - e.suggestedQuotationEur / (1 + rate)
-        return "of which VAT (\(Int((rate * 100).rounded())) %): \(Format.euro(vatAmount))"
+    private func ceilingValue(_ m: RoomMeasurement) -> String {
+        let area = Format.squareMetres(m.ceilingAreaM2)
+        if session.requirements?.paintScope.ceiling == false {
+            return "\(area) — not painted"
+        }
+        return area
+    }
+
+    private func paintValue(_ e: EstimateDraft) -> String {
+        e.primerQuantityLitres > 0
+            ? "\(Format.litres(e.paintQuantityLitres)) + \(Format.litres(e.primerQuantityLitres)) primer"
+            : Format.litres(e.paintQuantityLitres)
+    }
+
+    /// What preparation covers in this room, from the scan's object counts.
+    private var preparationValue: String {
+        let movable = session.measurements?.movableObjects ?? 0
+        let fixed = session.measurements?.fixedObjects ?? 0
+        var parts: [String] = []
+        if movable > 0 { parts.append("\(movable) item\(movable == 1 ? "" : "s") moved") }
+        if fixed > 0 { parts.append("\(fixed) protected in place") }
+        return parts.isEmpty ? "Included" : "Included — " + parts.joined(separator: ", ")
     }
 }
 
@@ -300,7 +327,7 @@ private struct DetailPage: View {
 
             if let r = session.requirements {
                 SectionTitle("Scope of Work")
-                ForEach(WorkPlan.stages(for: r)) { stage in
+                ForEach(WorkPlan.stages(for: r, measurements: session.measurements)) { stage in
                     Text(stage.title)
                         .font(.system(size: 10.5, weight: .semibold))
                         .padding(.top, 3)
@@ -392,6 +419,7 @@ private struct DetailPage: View {
 
 private struct TransformPage: View {
     let before: UIImage?
+    let preparation: UIImage?
     let preview: UIImage?
 
     var body: some View {
@@ -401,12 +429,19 @@ private struct TransformPage: View {
                 .padding(.bottom, 6)
             Divide()
 
-            if let before {
-                labeled("CURRENT ROOM", image: before)
+            if let before, let preparation {
+                // Three stages: today + prepared side by side, finished hero.
+                HStack(alignment: .top, spacing: 17) {
+                    labeled("1 · TODAY", image: before, size: CGSize(width: 245, height: 180))
+                    labeled("2 · PREPARED & PROTECTED", image: preparation, size: CGSize(width: 245, height: 180))
+                }
+            } else if let before {
+                labeled("CURRENT ROOM", image: before, size: CGSize(width: 507, height: 280))
             }
             if let preview {
-                labeled("AI PREVIEW — PROPOSED RESULT", image: preview)
-                Text("AI visualization generated from a photo of this room, showing only the requested finishes. Final result may vary slightly.")
+                labeled(preparation != nil ? "3 · THE FINISHED RESULT" : "AI PREVIEW — PROPOSED RESULT",
+                        image: preview, size: CGSize(width: 507, height: 300))
+                Text("AI visualization generated from a photo of this room, showing only the requested finishes. Furniture is moved and protected during the work and returned when finished. Final result may vary slightly.")
                     .font(.system(size: 9))
                     .foregroundStyle(.secondary)
                     .padding(.top, 4)
@@ -415,13 +450,13 @@ private struct TransformPage: View {
         }
     }
 
-    private func labeled(_ title: String, image: UIImage) -> some View {
+    private func labeled(_ title: String, image: UIImage, size: CGSize) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             SectionTitle(title)
             Image(uiImage: image)
                 .resizable()
                 .scaledToFill()
-                .frame(width: 507, height: 300)
+                .frame(width: size.width, height: size.height)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
         }
     }
