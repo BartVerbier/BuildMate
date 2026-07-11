@@ -15,6 +15,9 @@ targets:
         UILaunchScreen:
           UIColorName: LaunchBackground
         CFBundleDisplayName: BuildMate
+        # HTTPS/TLS only (standard, exempt encryption) — declaring this lets
+        # every TestFlight build skip the export-compliance question.
+        ITSAppUsesNonExemptEncryption: false
         NSCameraUsageDescription: BuildMate scans the room with the camera and LiDAR to measure it.
         NSMicrophoneUsageDescription: BuildMate records the visit conversation to draft the estimate.
         NSLocalNetworkUsageDescription: BuildMate finds your Mac on the local network and sends the captured visit to it.
