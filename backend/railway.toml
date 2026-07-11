@@ -1,14 +1,14 @@
 # Railway deployment config for the BuildMate backend.
-# Set the Railway service's Root Directory to `backend/` so this file and
-# pyproject.toml are at the build root.
+# Set the Railway service's Root Directory to `backend/` so this file,
+# Procfile, and pyproject.toml are at the build root.
 #
-# Build: Nixpacks detects pyproject.toml and runs `pip install .`, which on
-#        Linux installs faster-whisper (via the platform marker) and skips MLX.
-# Run:   the app binds Railway's injected $PORT; --no-warmup keeps boot fast
-#        so the health check goes green quickly (the model loads on first use).
-
-[build]
-builder = "NIXPACKS"
+# Builder: not forced — Railway's default (Railpack) detects Python from
+#          pyproject.toml and installs dependencies; on Linux the platform
+#          marker installs faster-whisper and skips MLX.
+# Start:   the command lives here AND in the Procfile (belt and suspenders —
+#          both Railpack and Nixpacks honour a Procfile). It binds Railway's
+#          injected $PORT; --no-warmup keeps boot fast so the health check
+#          goes green quickly (the transcription model loads on first use).
 
 [deploy]
 startCommand = "python -m buildpilot --host 0.0.0.0 --port $PORT --no-warmup"
