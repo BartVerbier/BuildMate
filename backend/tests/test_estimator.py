@@ -108,3 +108,44 @@ def test_estimator_is_deterministic():
     a = DeterministicEstimator().estimate(measurements(), RequirementExtraction(), profile())
     b = DeterministicEstimator().estimate(measurements(), RequirementExtraction(), profile())
     assert a.model_dump() == b.model_dump()
+
+
+def test_wall_selection_prices_only_selected_walls():
+    """Conversation limited painting to w1: only its net area is priced.
+
+    walls: w1 net 11.3, w2 net 10.7, w3 7.5, w4 7.5 (room total 37.0)
+    area = 11.3 (ceiling excluded)
+    paint  = 11.3 x 2 / 12 x 1.10 = 2.0717 -> 2.5 L
+    labour = 11.3 x 3 / 10 x 1.15 = 3.8985 -> 4.0 h
+    """
+    from buildpilot.models.session import WallDetail
+
+    m = measurements().model_copy(update={"walls": [
+        WallDetail(wall_id="w1", width_m=5.0, height_m=2.5, gross_area_m2=12.5,
+                   opening_area_m2=1.2, net_area_m2=11.3),
+        WallDetail(wall_id="w2", width_m=5.0, height_m=2.5, gross_area_m2=12.5,
+                   opening_area_m2=1.8, net_area_m2=10.7),
+        WallDetail(wall_id="w3", width_m=3.0, height_m=2.5, gross_area_m2=7.5,
+                   net_area_m2=7.5),
+        WallDetail(wall_id="w4", width_m=3.0, height_m=2.5, gross_area_m2=7.5,
+                   net_area_m2=7.5),
+    ]})
+    requirements = RequirementExtraction(
+        painted_wall_ids=["w1"],
+        paint_scope=PaintScope(walls=True, ceiling=False),
+    )
+    estimate = DeterministicEstimator().estimate(m, requirements, profile())
+
+    assert estimate.paint_quantity_litres == 2.5
+    assert estimate.labour_hours == 4.0
+    assert any("Painting 1 of 4 walls" in a for a in estimate.assumptions)
+
+
+def test_unknown_wall_selection_falls_back_to_all_walls():
+    requirements = RequirementExtraction(
+        painted_wall_ids=["w9"],  # not in the (empty) wall list
+        paint_scope=PaintScope(walls=True, ceiling=False),
+    )
+    estimate = DeterministicEstimator().estimate(measurements(), requirements, profile())
+    assert any("did not match" in a for a in estimate.assumptions)
+    assert any("net wall area 36.00" in a for a in estimate.assumptions)

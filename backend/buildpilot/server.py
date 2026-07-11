@@ -32,11 +32,13 @@ from buildpilot.pipelines.extraction import ClaudeRequirementsExtractor
 from buildpilot.pipelines.measurement import RoomPlanMeasurementEngine
 from buildpilot.pipelines.transcription import MlxWhisperTranscriber
 from buildpilot.pipelines.visualization import GeminiVisualizer, VisualizationError
-from buildpilot.session_store import SessionStore
+from buildpilot.session_store import POSES_FILE, SessionStore
 
 MAX_ROOM_SCAN_BYTES = 50 * 1024 * 1024
 MAX_AUDIO_BYTES = 500 * 1024 * 1024
 MAX_PHOTO_BYTES = 30 * 1024 * 1024
+MAX_POSES_BYTES = 10 * 1024 * 1024
+PHOTO_TIMES_FILE = "photo-times.json"
 
 
 def _estimate_deltas(old, new) -> list:
@@ -99,6 +101,7 @@ def create_app(
     async def create_session(
         room_scan: UploadFile = File(...),
         audio: Optional[UploadFile] = File(None),
+        poses: Optional[UploadFile] = File(None),
     ) -> dict:
         room_bytes = await room_scan.read()
         if len(room_bytes) > MAX_ROOM_SCAN_BYTES:
@@ -114,7 +117,25 @@ def create_app(
             if len(audio_bytes) > MAX_AUDIO_BYTES:
                 raise HTTPException(413, "Audio too large")
 
+        # Camera pose log (optional, best-effort): powers gaze resolution
+        # and reference-photo selection. A malformed log is dropped, never
+        # a failed visit.
+        poses_list = None
+        if poses is not None:
+            poses_bytes = await poses.read()
+            if len(poses_bytes) <= MAX_POSES_BYTES:
+                try:
+                    parsed = json.loads(poses_bytes)
+                    if isinstance(parsed, list):
+                        poses_list = parsed
+                except (ValueError, UnicodeDecodeError):
+                    pass
+
         session = app.state.store.create_session(room_bytes, audio_bytes)
+        if poses_list is not None:
+            app.state.store.write_artifact(
+                session, POSES_FILE, json.dumps(poses_list)
+            )
         session = app.state.pipeline.run(app.state.store, session)
         return session.model_dump(mode="json")
 
@@ -139,9 +160,12 @@ def create_app(
         session_id: str,
         photo: UploadFile = File(...),
         kind: str = Form("before"),
+        t: Optional[float] = Form(None),
     ) -> dict:
         """Archives a visit photo (before/progress/after) into the session
-        directory — part of the permanent project record."""
+        directory — part of the permanent project record. `t` is the frame's
+        capture time on the visit clock (seconds since the audio recording
+        started); it links the photo to a camera pose for reference selection."""
         session = _load_or_404(session_id)
         if kind not in ("before", "progress", "after"):
             raise HTTPException(400, "kind must be before, progress, or after")
@@ -156,6 +180,16 @@ def create_app(
         index = len(list(photos_dir.glob(f"{kind}-*.jpg"))) + 1
         file_name = f"{kind}-{index:02d}.jpg"
         (photos_dir / file_name).write_bytes(data)
+        if t is not None:
+            times_path = photos_dir / PHOTO_TIMES_FILE
+            times = {}
+            if times_path.exists():
+                try:
+                    times = json.loads(times_path.read_text())
+                except ValueError:
+                    times = {}
+            times[file_name] = float(t)
+            times_path.write_text(json.dumps(times, indent=2))
         return {"stored": f"photos/{file_name}"}
 
     @app.post("/sessions/{session_id}/revise")
@@ -200,10 +234,17 @@ def create_app(
         # 3. Merge changes (LLM), re-estimate (deterministic).
         try:
             updated, changes = app.state.pipeline.extractor.revise(
-                session.requirements, transcript
+                session.requirements, transcript,
+                room_context=VisitPipeline._room_context(session),
             )
         except ExtractionError as exc:
             raise HTTPException(503, f"Revision unavailable: {exc}")
+        # Hard constraint (same as the pipeline): only walls that exist.
+        if session.measurements:
+            known = {w.wall_id for w in session.measurements.walls}
+            updated.painted_wall_ids = [
+                wall_id for wall_id in updated.painted_wall_ids if wall_id in known
+            ]
 
         old = session.estimate
         session.requirements = updated
@@ -287,9 +328,10 @@ def create_app(
         if not before_photos:
             raise HTTPException(409, "No Before photo archived for this session")
 
+        reference = _select_reference(session, photos_dir, before_photos)
         try:
             image = app.state.visualizer.render(
-                before_photos[-1].read_bytes(), session.requirements, stage
+                reference.read_bytes(), session.requirements, stage
             )
         except VisualizationError as exc:
             raise HTTPException(503, f"Visualization unavailable: {exc}")
@@ -310,6 +352,44 @@ def create_app(
     @app.get("/", response_class=HTMLResponse)
     def console() -> str:
         return (Path(__file__).parent / "console.html").read_text()
+
+    def _select_reference(session, photos_dir: Path, before_photos: list) -> Path:
+        """The Before photo that shows the painted wall(s) most completely.
+
+        Deterministic geometry: each archived photo's capture time links it
+        to a camera pose, and the pose projects the target walls into the
+        frame (pipelines/gaze.py). Highest coverage wins; ties and missing
+        data (older app builds) fall back to the newest photo — the phone's
+        own best-quality pick.
+        """
+        fallback = before_photos[-1]
+        times_path = photos_dir / PHOTO_TIMES_FILE
+        if not times_path.exists():
+            return fallback
+        try:
+            from buildpilot.pipelines.gaze import score_reference_frames
+
+            times = json.loads(times_path.read_text())
+            poses = app.state.store.load_poses(session)
+            walls_json = app.state.store.load_room_scan(session).get("walls") or []
+            target_ids = session.requirements.painted_wall_ids if session.requirements else []
+            names = {p.name for p in before_photos}
+            scores = score_reference_frames(
+                {n: t for n, t in times.items() if n in names},
+                poses, walls_json, target_ids,
+            )
+        except Exception:
+            return fallback
+        if not scores or max(scores.values()) <= 0:
+            return fallback
+        best = max(scores, key=lambda n: (scores[n], n))
+        import logging
+        logging.getLogger(__name__).info(
+            "Reference selection: %s (coverage %.2f) of %d candidates%s",
+            best, scores[best], len(before_photos),
+            f", target walls {target_ids}" if target_ids else "",
+        )
+        return photos_dir / best
 
     def _load_or_404(session_id: str):
         try:

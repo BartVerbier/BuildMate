@@ -38,11 +38,26 @@ final class RoomCaptureController: NSObject, ObservableObject {
     struct FrameCandidate {
         let jpeg: Data
         let score: Double
+        let t: Double // seconds on the visit clock (audio start = 0)
         let detail: String // for diagnostics: "sharp 0.71 level 0.94 expo 0.88"
+    }
+
+    /// One camera pose on the visit clock. ARKit and RoomPlan share a world
+    /// frame, so these poses let the backend resolve which wall the camera
+    /// (and the conversation) was pointing at, and how completely a wall
+    /// fits in a frame. Column-major 4x4 transform; sensor-space intrinsics.
+    struct PoseSample: Codable {
+        let t: Double
+        let transform: [Double] // 16 values, column-major
+        let fx, fy, cx, cy: Double
+        let w, h: Int
     }
 
     private var frameTimer: Timer?
     private var frameCandidates: [FrameCandidate] = []
+    private var poseSamples: [PoseSample] = []
+    /// The visit clock's zero point — the moment audio recording started.
+    private var clockReference = Date()
 
     override init() {
         captureView = RoomCaptureView(frame: .zero)
@@ -50,10 +65,12 @@ final class RoomCaptureController: NSObject, ObservableObject {
         captureView.delegate = self
     }
 
-    func start() {
+    func start(clockReference: Date = Date()) {
         guard !isScanning else { return }
         isScanning = true
         frameCandidates = []
+        poseSamples = []
+        self.clockReference = clockReference
         captureView.captureSession.run(configuration: RoomCaptureSession.Configuration())
         frameTimer = Timer.scheduledTimer(
             withTimeInterval: Self.frameSampleInterval, repeats: true
@@ -72,20 +89,42 @@ final class RoomCaptureController: NSObject, ObservableObject {
         captureView.captureSession.stop()
     }
 
-    /// The best-scoring frames from the scan, ordered best-first, ready to
-    /// be saved as the visit's Before photos. Call after stop().
-    func bestBeforePhotos() -> [UIImage] {
+    /// The best-scoring frames from the scan, ordered best-first, each with
+    /// its capture time on the visit clock. Call after stop().
+    func bestBeforePhotos() -> [(image: UIImage, t: Double)] {
         let selected = frameCandidates
             .sorted { $0.score > $1.score }
             .prefix(Self.maxKeptFrames)
         visitLog.info("Before-photo selection: \(self.frameCandidates.count) candidates → kept \(selected.count): \(selected.map(\.detail).joined(separator: " | "))")
-        return selected.compactMap { UIImage(data: $0.jpeg) }
+        return selected.compactMap { candidate in
+            UIImage(data: candidate.jpeg).map { ($0, candidate.t) }
+        }
+    }
+
+    /// The scan's camera pose log, JSON-encoded for upload. Call after stop().
+    func posesJSON() -> Data? {
+        guard !poseSamples.isEmpty else { return nil }
+        return try? JSONEncoder().encode(poseSamples)
     }
 
     private func sampleFrame() {
         guard isScanning,
               let frame = captureView.captureSession.arSession.currentFrame
         else { return }
+
+        // Pose first — logged for every tick, even when the photo is skipped.
+        let t = Date().timeIntervalSince(clockReference)
+        let m = frame.camera.transform
+        let k = frame.camera.intrinsics
+        let resolution = frame.camera.imageResolution
+        poseSamples.append(PoseSample(
+            t: t,
+            transform: [m.columns.0, m.columns.1, m.columns.2, m.columns.3]
+                .flatMap { [Double($0.x), Double($0.y), Double($0.z), Double($0.w)] },
+            fx: Double(k.columns.0.x), fy: Double(k.columns.1.y),
+            cx: Double(k.columns.2.x), cy: Double(k.columns.2.y),
+            w: Int(resolution.width), h: Int(resolution.height)
+        ))
 
         // Angle first (the customer-presentation priority): pitch 0 = camera
         // level and wall-facing — the best proxy for "largest visible wall,
@@ -107,7 +146,7 @@ final class RoomCaptureController: NSObject, ObservableObject {
         guard let jpeg = image.jpegData(compressionQuality: 0.8) else { return }
 
         let detail = String(format: "sharp %.2f level %.2f expo %.2f → %.2f", sharpness, levelness, exposure, score)
-        frameCandidates.append(FrameCandidate(jpeg: jpeg, score: score, detail: detail))
+        frameCandidates.append(FrameCandidate(jpeg: jpeg, score: score, t: t, detail: detail))
         // Bound memory: keep only the best dozen candidates while scanning.
         if frameCandidates.count > 12 {
             frameCandidates.sort { $0.score > $1.score }

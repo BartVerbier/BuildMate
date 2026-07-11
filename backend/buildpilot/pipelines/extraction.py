@@ -41,6 +41,14 @@ Rules:
   windows, radiators, trim and skirting are normally NOT painted. Only add
   them to scope_of_work if the customer explicitly asks; if the customer
   explicitly declines them, record that in exclusions.
+- Wall targeting: the transcript may carry gaze annotations like
+  "[facing w2]" — the wall the camera was pointing at while those words
+  were spoken — and a wall inventory may be provided. Set painted_wall_ids
+  ONLY when the conversation clearly limits painting to specific wall(s)
+  (e.g. "look at this wall", "only this wall", "just the white wall" said
+  while facing it). Use ONLY ids from the provided inventory. When the
+  whole room is being painted, or you are not sure which wall is meant,
+  leave painted_wall_ids empty — empty means all walls.
 - The transcript may contain filler and unrelated small talk; ignore it."""
 
 
@@ -52,6 +60,7 @@ class _LlmExtraction(BaseModel):
     preparation_required: List[str] = Field(default_factory=list)
     special_notes: List[str] = Field(default_factory=list)
     paint_scope: PaintScope = Field(default_factory=PaintScope)
+    painted_wall_ids: List[str] = Field(default_factory=list)
 
 
 class _LlmRevision(_LlmExtraction):
@@ -74,6 +83,10 @@ requested changes. Produce the complete UPDATED requirements:
 - Also return `changes`: short human-readable bullets describing each
   applied change, e.g. "Ceiling painting added", "Wall colour changed to
   white", "Wallpaper removal removed".
+- painted_wall_ids: keep the current selection unless the customer changes
+  which walls are painted (e.g. "actually paint every wall" → empty list,
+  meaning all walls; "also the wall by the window" → add its id from the
+  wall inventory if one is provided). Use only ids from the inventory.
 - If the transcript contains no actionable change, return the current
   requirements unchanged and an empty `changes` list."""
 
@@ -113,7 +126,9 @@ class ClaudeRequirementsExtractor:
             or os.environ.get("ANTHROPIC_AUTH_TOKEN")
         )
 
-    def extract(self, transcript: str) -> RequirementExtraction:
+    def extract(
+        self, transcript: str, room_context: str | None = None
+    ) -> RequirementExtraction:
         if not transcript.strip():
             return default_requirements("empty transcript")
         try:
@@ -122,8 +137,12 @@ class ClaudeRequirementsExtractor:
             raise ExtractionError("anthropic SDK is not installed") from exc
 
         logger.info(
-            "Extraction request: model=%s, transcript=%d chars", self.model, len(transcript)
+            "Extraction request: model=%s, transcript=%d chars, room_context=%s",
+            self.model, len(transcript), bool(room_context),
         )
+        user_content = f"Visit transcript:\n\n{transcript}"
+        if room_context:
+            user_content = f"{room_context}\n\n{user_content}"
         started = time.perf_counter()
         try:
             client = anthropic.Anthropic()
@@ -131,12 +150,7 @@ class ClaudeRequirementsExtractor:
                 model=self.model,
                 max_tokens=4096,
                 system=SYSTEM_PROMPT,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": f"Visit transcript:\n\n{transcript}",
-                    }
-                ],
+                messages=[{"role": "user", "content": user_content}],
                 output_format=_LlmExtraction,
             )
         except anthropic.APIError as exc:  # includes AuthenticationError
@@ -164,11 +178,15 @@ class ClaudeRequirementsExtractor:
             preparation_required=extracted.preparation_required,
             special_notes=extracted.special_notes,
             paint_scope=extracted.paint_scope,
+            painted_wall_ids=extracted.painted_wall_ids,
             transcript_available=True,
         )
 
     def revise(
-        self, current: RequirementExtraction, transcript: str
+        self,
+        current: RequirementExtraction,
+        transcript: str,
+        room_context: str | None = None,
     ) -> tuple[RequirementExtraction, list[str]]:
         """Merges the customer's requested changes into the existing
         requirements. Returns (updated requirements, human-readable changes).
@@ -195,7 +213,8 @@ class ClaudeRequirementsExtractor:
                     {
                         "role": "user",
                         "content": (
-                            "CURRENT requirements:\n"
+                            (f"{room_context}\n\n" if room_context else "")
+                            + "CURRENT requirements:\n"
                             f"{current.model_dump_json(indent=2)}\n\n"
                             f"Requested changes (transcript):\n{transcript}"
                         ),
@@ -219,6 +238,7 @@ class ClaudeRequirementsExtractor:
             preparation_required=revision.preparation_required,
             special_notes=revision.special_notes,
             paint_scope=revision.paint_scope,
+            painted_wall_ids=revision.painted_wall_ids,
             transcript_available=True,
         )
         return updated, revision.changes

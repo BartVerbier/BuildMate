@@ -56,7 +56,7 @@ final class VisitController: ObservableObject {
     private(set) var visitName = ""
     private(set) var scanStartedAt: Date?
     private(set) var pendingCustomer: CustomerInfo?
-    private var pendingBundle: (roomJSON: Data, audioFile: URL?)?
+    private var pendingBundle: (roomJSON: Data, audioFile: URL?, poses: Data?)?
 
     var deviceSupported: Bool { RoomCaptureController.isSupported }
 
@@ -109,12 +109,15 @@ final class VisitController: ObservableObject {
             phase = .failed(message: "Audio recording couldn't start. Close other apps using the microphone and try again.", canRetry: false)
             return
         }
+        // The visit clock: camera poses are timestamped against the moment
+        // audio started, so spoken words and gaze line up on the backend.
+        let audioStarted = Date()
 
         visitName = Self.visitName(for: pendingCustomer)
-        scanStartedAt = Date()
+        scanStartedAt = audioStarted
         pendingBundle = nil
         readbackConfirmed = false
-        roomCapture.start()
+        roomCapture.start(clockReference: audioStarted)
         visitLog.info("Scanning started (backend: \(backendURL.absoluteString))")
         phase = .scanning
     }
@@ -129,8 +132,9 @@ final class VisitController: ObservableObject {
                 guard let self else { return }
                 switch result {
                 case .success(let roomJSON):
-                    visitLog.info("Scan finalized: \(roomJSON.count) bytes room JSON, audio: \(audioFile != nil)")
-                    self.pendingBundle = (roomJSON, audioFile)
+                    let poses = self.roomCapture.posesJSON()
+                    visitLog.info("Scan finalized: \(roomJSON.count) bytes room JSON, audio: \(audioFile != nil), poses: \(poses?.count ?? 0) bytes")
+                    self.pendingBundle = (roomJSON, audioFile, poses)
                     await self.uploadPendingBundle()
                 case .failure(let error):
                     visitLog.error("RoomPlan processing failed: \(error.localizedDescription)")
@@ -242,7 +246,7 @@ final class VisitController: ObservableObject {
         let uploadStarted = Date()
         do {
             let session = try await HTTPBackendClient(baseURL: url)
-                .submitVisit(roomScan: bundle.roomJSON, audioFile: bundle.audioFile)
+                .submitVisit(roomScan: bundle.roomJSON, audioFile: bundle.audioFile, poses: bundle.poses)
             visitLog.info("Upload + pipeline finished in \(Date().timeIntervalSince(uploadStarted), format: .fixed(precision: 1))s → \(session.status) (\(session.sessionId))")
             if session.status == "completed" {
                 pendingBundle = nil
@@ -268,26 +272,29 @@ final class VisitController: ObservableObject {
     /// photos, archive them, then request the AI visualization. All
     /// best-effort and in the background — the estimate is never delayed.
     private func finalizeVisitMedia(sessionID: String, backendURL: URL) {
-        let frames = roomCapture.bestBeforePhotos() // best-first
+        let frames = roomCapture.bestBeforePhotos() // best-first, with capture times
         visitLog.info("Auto-captured \(frames.count) Before photos from the scan")
 
-        var savedPhotos: [VisitPhoto] = []
-        for image in frames {
-            if let photo = PhotoStore.save(image, visitID: sessionID, kind: .before) {
+        var savedPhotos: [(photo: VisitPhoto, t: Double)] = []
+        for frame in frames {
+            if let photo = PhotoStore.save(frame.image, visitID: sessionID, kind: .before) {
                 history.addPhoto(photo, to: sessionID)
-                savedPhotos.append(photo) // record order = best-first (drives app + PDF)
+                savedPhotos.append((photo, frame.t)) // record order = best-first (drives app + PDF)
             }
         }
 
         Task { [weak self] in
             let client = HTTPBackendClient(baseURL: backendURL)
-            // 1. Archive the Before photos. Reversed: the backend renders
-            //    from the newest-numbered archive, so the BEST frame is
-            //    uploaded last and becomes the visualization reference.
-            for photo in savedPhotos.reversed() {
-                guard let jpeg = PhotoStore.jpegData(photo, visitID: sessionID) else { continue }
+            // 1. Archive the Before photos with their capture times so the
+            //    backend can match each to a camera pose and pick the frame
+            //    that shows the painted wall most completely. Reversed: the
+            //    BEST frame lands last — the fallback when no poses exist.
+            for entry in savedPhotos.reversed() {
+                guard let jpeg = PhotoStore.jpegData(entry.photo, visitID: sessionID) else { continue }
                 do {
-                    try await client.uploadPhoto(sessionID: sessionID, kind: "before", jpeg: jpeg)
+                    try await client.uploadPhoto(
+                        sessionID: sessionID, kind: "before", jpeg: jpeg, t: entry.t
+                    )
                 } catch {
                     visitLog.warning("Before-photo archive failed: \(error.localizedDescription)")
                 }

@@ -57,6 +57,13 @@ class MlxWhisperTranscriber:
         )
 
     def transcribe(self, audio_path: Path) -> str:
+        text, _segments = self.transcribe_segments(audio_path)
+        return text
+
+    def transcribe_segments(self, audio_path: Path) -> tuple[str, list[dict]]:
+        """Transcript text plus Whisper's timed segments
+        ([{start, end, text}], seconds from the start of the recording) —
+        the timeline that lets gaze resolution ground words in geometry."""
         if not audio_path.exists():
             raise TranscriptionError(f"Audio file not found: {audio_path}")
         try:
@@ -67,7 +74,16 @@ class MlxWhisperTranscriber:
             ) from exc
         samples = _decode_audio(audio_path)
         result = mlx_whisper.transcribe(samples, path_or_hf_repo=self.model_name)
-        return (result.get("text") or "").strip()
+        segments = [
+            {
+                "start": float(s.get("start", 0.0)),
+                "end": float(s.get("end", 0.0)),
+                "text": (s.get("text") or "").strip(),
+            }
+            for s in result.get("segments") or []
+            if (s.get("text") or "").strip()
+        ]
+        return (result.get("text") or "").strip(), segments
 
 
 def _decode_audio(audio_path: Path):

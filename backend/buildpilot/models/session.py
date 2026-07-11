@@ -47,6 +47,22 @@ class RoomScanCapture(BaseModel):
     size_bytes: Optional[int] = Field(default=None, ge=0)
 
 
+class WallDetail(BaseModel):
+    """One reconstructed wall, individually measurable.
+
+    `wall_id` is a session-stable short id ("w1", "w2", ...) assigned by
+    wall order in the CapturedRoom JSON — the shared vocabulary between the
+    gaze resolver, the requirements extractor, and the estimator.
+    """
+
+    wall_id: str
+    width_m: float = Field(ge=0)
+    height_m: float = Field(ge=0)
+    gross_area_m2: float = Field(ge=0)
+    opening_area_m2: float = Field(default=0, ge=0)  # doors/windows on this wall
+    net_area_m2: float = Field(ge=0)
+
+
 class RoomMeasurement(BaseModel):
     """Deterministic measurement output derived from a room scan. Areas in m2."""
 
@@ -62,6 +78,9 @@ class RoomMeasurement(BaseModel):
     # Defaults keep sessions saved by earlier versions loading cleanly.
     fixed_objects: int = Field(default=0, ge=0)
     movable_objects: int = Field(default=0, ge=0)
+    # Per-wall breakdown (pre-Railway sprint): lets the estimator price only
+    # the walls actually being painted. Empty for sessions from older scans.
+    walls: List[WallDetail] = Field(default_factory=list)
     notes: List[str] = Field(default_factory=list)
 
 
@@ -85,6 +104,11 @@ class RequirementExtraction(BaseModel):
     preparation_required: List[str] = Field(default_factory=list)
     special_notes: List[str] = Field(default_factory=list)
     paint_scope: PaintScope = Field(default_factory=PaintScope)
+    # Which walls are being painted, by WallDetail.wall_id. Empty means the
+    # whole room's walls (the historical behavior). Filled only when the
+    # conversation clearly limits painting to specific walls, grounded by
+    # where the camera was pointing (the gaze resolver's annotations).
+    painted_wall_ids: List[str] = Field(default_factory=list)
     transcript_available: bool = True
 
 

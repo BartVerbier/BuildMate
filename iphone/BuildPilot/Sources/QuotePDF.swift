@@ -228,7 +228,12 @@ private struct SummaryPage: View {
                 // areas, quantities, cost lines, then the total.
                 SectionTitle("Your Quotation at a Glance")
                 if let m = session.measurements {
-                    Line("Paintable wall area", Format.squareMetres(m.netWallAreaM2))
+                    if let sel = session.wallSelection {
+                        Line("Paintable wall area (\(sel.selected) of \(sel.total) walls)",
+                             Format.squareMetres(sel.areaM2))
+                    } else {
+                        Line("Paintable wall area", Format.squareMetres(m.netWallAreaM2))
+                    }
                     Line("Ceiling area", ceilingValue(m))
                 }
                 Line("Estimated paint required", paintValue(e))
@@ -453,11 +458,18 @@ private struct TransformPage: View {
     private func labeled(_ title: String, image: UIImage, size: CGSize) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             SectionTitle(title)
-            Image(uiImage: image)
-                .resizable()
-                .scaledToFill()
-                .frame(width: size.width, height: size.height)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+            // scaledToFit, never fill: the customer must see the complete
+            // photograph — cropping here silently cut walls out of the quote.
+            ZStack {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.black.opacity(0.05))
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .padding(2)
+            }
+            .frame(width: size.width, height: size.height)
         }
     }
 }

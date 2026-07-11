@@ -192,6 +192,38 @@ def test_closed_room_is_not_completed(captured_room):
     assert not any("uncaptured walls" in note for note in result.notes)
 
 
+def test_wall_details_break_down_per_wall(captured_room):
+    """Per-wall areas with the door/window assigned to their nearest wall:
+    window (1.2 m2) sits on w1, door (1.8 m2) on w2."""
+    result = RoomPlanMeasurementEngine().measure(captured_room)
+    assert [w.wall_id for w in result.walls] == ["w1", "w2", "w3", "w4"]
+    by_id = {w.wall_id: w for w in result.walls}
+    assert by_id["w1"].gross_area_m2 == 12.5
+    assert by_id["w1"].opening_area_m2 == 1.2
+    assert by_id["w1"].net_area_m2 == 11.3
+    assert by_id["w2"].opening_area_m2 == 1.8
+    assert by_id["w2"].net_area_m2 == 10.7
+    assert by_id["w3"].net_area_m2 == 7.5
+    assert by_id["w4"].net_area_m2 == 7.5
+    # Per-wall nets reconcile with the room total (no completion here)
+    assert round(sum(w.net_area_m2 for w in result.walls), 2) == result.net_wall_area_m2
+
+
+def test_wall_details_deduct_built_ins_on_their_wall(captured_room):
+    captured_room["objects"] = [
+        {   # tall built-in wardrobe against w1 (z=-1.5)
+            "category": {"storage": {}},
+            "dimensions": [2.0, 2.2, 0.6],
+            "transform": [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0.0, 1.1, -1.15, 1]],
+        }
+    ]
+    result = RoomPlanMeasurementEngine().measure(captured_room)
+    by_id = {w.wall_id: w for w in result.walls}
+    # w1: 12.5 gross − 1.2 window − 4.4 wardrobe = 6.9
+    assert by_id["w1"].net_area_m2 == 6.9
+    assert by_id["w2"].net_area_m2 == 10.7
+
+
 def test_polygon_area_l_shape():
     # L-shape: 4x3 rectangle minus a 2x1 corner = 10 m2, in the x-y plane
     corners = [[0, 0, 0], [4, 0, 0], [4, 2, 0], [2, 2, 0], [2, 3, 0], [0, 3, 0]]

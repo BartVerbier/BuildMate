@@ -38,7 +38,7 @@ class FailingTranscriber:
 
 
 class FakeExtractor:
-    def extract(self, transcript: str) -> RequirementExtraction:
+    def extract(self, transcript: str, room_context=None) -> RequirementExtraction:
         return RequirementExtraction(
             scope_of_work=["Paint the walls"],
             exclusions=["Ceiling"],
@@ -48,7 +48,7 @@ class FakeExtractor:
 
 
 class FailingExtractor:
-    def extract(self, transcript: str) -> RequirementExtraction:
+    def extract(self, transcript: str, room_context=None) -> RequirementExtraction:
         raise ExtractionError("no API credentials")
 
 

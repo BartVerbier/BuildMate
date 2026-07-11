@@ -11,6 +11,7 @@ crashed run leaves inspectable artifacts behind.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from datetime import datetime, timezone
@@ -80,20 +81,55 @@ class VisitPipeline:
             session.measurements = self.measurement_engine.measure(captured_room)
         store.save(session)
 
-        # 2. Transcription (local Whisper; optional)
+        # 2. Transcription (local Whisper; optional). Timed segments are
+        #    kept when the transcriber provides them — they feed gaze
+        #    resolution; plain text alone degrades to room-level extraction.
         transcript = ""
+        segments: list = []
         audio_path = store.audio_path(session)
         if audio_path is None:
             logger.info("%s: no audio uploaded", session.session_id)
         else:
             try:
                 with self._timed(session, "transcribe"):
-                    transcript = self.transcriber.transcribe(audio_path)
+                    if hasattr(self.transcriber, "transcribe_segments"):
+                        transcript, segments = self.transcriber.transcribe_segments(audio_path)
+                    else:
+                        transcript = self.transcriber.transcribe(audio_path)
                 session.raw_metadata["transcript_chars"] = str(len(transcript))
                 store.write_artifact(session, TRANSCRIPT_FILE, transcript)
+                if segments:
+                    store.write_artifact(
+                        session, "segments.json", json.dumps(segments, indent=2)
+                    )
             except TranscriptionError as exc:
                 logger.warning("%s: transcription failed: %s", session.session_id, exc)
                 session.raw_metadata["transcription_error"] = str(exc)
+
+        # 2b. Gaze resolution (deterministic geometry, optional): annotate
+        #     each spoken segment with the wall the camera was facing, so
+        #     "this wall" becomes a wall id the extractor can reference.
+        extraction_transcript = transcript
+        if segments:
+            poses = store.load_poses(session)
+            if poses:
+                try:
+                    from buildpilot.pipelines.gaze import annotate_segments, annotated_transcript
+
+                    walls_json = captured_room.get("walls") or []
+                    annotations = annotate_segments(segments, poses, walls_json)
+                    store.write_artifact(
+                        session, "gaze.json", json.dumps(annotations, indent=2)
+                    )
+                    resolved = sum(1 for a in annotations if a.get("wall_id"))
+                    session.raw_metadata["gaze_resolved_segments"] = (
+                        f"{resolved}/{len(annotations)}"
+                    )
+                    if resolved:
+                        extraction_transcript = annotated_transcript(annotations)
+                except Exception as exc:  # gaze is an enhancement, never a blocker
+                    logger.warning("%s: gaze resolution failed: %s", session.session_id, exc)
+                    session.raw_metadata["gaze_error"] = str(exc)
 
         # 3. Requirements extraction (LLM; degrades to defaults)
         if not transcript.strip():
@@ -101,11 +137,22 @@ class VisitPipeline:
         else:
             try:
                 with self._timed(session, "extract"):
-                    session.requirements = self.extractor.extract(transcript)
+                    session.requirements = self.extractor.extract(
+                        extraction_transcript,
+                        room_context=self._room_context(session),
+                    )
             except ExtractionError as exc:
                 logger.warning("%s: extraction failed: %s", session.session_id, exc)
                 session.raw_metadata["extraction_error"] = str(exc)
                 session.requirements = default_requirements(str(exc))
+        # Hard constraint: the model may only reference walls that exist.
+        # Unknown ids are dropped; an empty result means "all walls".
+        if session.requirements and session.measurements:
+            known = {w.wall_id for w in session.measurements.walls}
+            session.requirements.painted_wall_ids = [
+                wall_id for wall_id in session.requirements.painted_wall_ids
+                if wall_id in known
+            ]
         store.save(session)
 
         # 4. Deterministic estimation (never AI)
@@ -121,6 +168,21 @@ class VisitPipeline:
             session, "estimate.json", session.estimate.model_dump_json(indent=2)
         )
         return session
+
+    @staticmethod
+    def _room_context(session: Session) -> str:
+        """The wall inventory handed to the extractor — the only ids it may
+        reference in painted_wall_ids."""
+        measurements = session.measurements
+        if measurements is None or not measurements.walls:
+            return ""
+        lines = ["Walls in this room (from the 3D scan):"]
+        for w in measurements.walls:
+            lines.append(
+                f"- {w.wall_id}: {w.width_m:.2f} m wide x {w.height_m:.2f} m high"
+                f" ({w.net_area_m2:.2f} m2 paintable)"
+            )
+        return "\n".join(lines)
 
     class _timed:
         """Records a stage duration into raw_metadata as `timing_<stage>_s`."""

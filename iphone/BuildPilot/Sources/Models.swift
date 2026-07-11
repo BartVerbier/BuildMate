@@ -42,7 +42,18 @@ struct RoomMeasurement: Codable {
     // Optional: absent in visits stored by earlier versions.
     let fixedObjects: Int?
     let movableObjects: Int?
+    let walls: [WallDetail]?
     let notes: [String]
+}
+
+/// One reconstructed wall, individually measurable ("w1", "w2", ...).
+struct WallDetail: Codable {
+    let wallId: String
+    let widthM: Double
+    let heightM: Double
+    let grossAreaM2: Double
+    let openingAreaM2: Double
+    let netAreaM2: Double
 }
 
 struct PaintScope: Codable {
@@ -56,7 +67,22 @@ struct RequirementExtraction: Codable {
     let preparationRequired: [String]
     let specialNotes: [String]
     let paintScope: PaintScope
+    // Walls being painted, by wall id; empty/absent = all walls.
+    let paintedWallIds: [String]?
     let transcriptAvailable: Bool
+}
+
+extension SessionResponse {
+    /// The wall selection when the conversation limited painting to
+    /// specific walls: (selected count, total walls, painted area in m²).
+    /// Nil when the whole room's walls are in scope.
+    var wallSelection: (selected: Int, total: Int, areaM2: Double)? {
+        guard let ids = requirements?.paintedWallIds, !ids.isEmpty,
+              let walls = measurements?.walls, !walls.isEmpty else { return nil }
+        let selected = walls.filter { ids.contains($0.wallId) }
+        guard !selected.isEmpty else { return nil }
+        return (selected.count, walls.count, selected.reduce(0) { $0 + $1.netAreaM2 })
+    }
 }
 
 struct EstimateDraft: Codable {

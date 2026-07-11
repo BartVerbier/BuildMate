@@ -25,10 +25,12 @@ FAKE_RENDER = b"\xff\xd8\xff\xe0RENDERED"
 class FakeVisualizer:
     def __init__(self):
         self.stages = []
+        self.photos = []
 
     def render(self, photo_jpeg, requirements, stage="finished"):
         assert photo_jpeg.startswith(b"\xff\xd8")
         self.stages.append(stage)
+        self.photos.append(photo_jpeg)
         return FAKE_RENDER
 
 
@@ -95,6 +97,40 @@ def test_visualize_preparation_stage(tmp_path):
     assert (store.session_dir(session_id) / "photos" / "preparation-01.jpg").exists()
 
     assert client.post(f"/sessions/{session_id}/visualize?stage=demolition").status_code == 400
+
+
+def test_reference_photo_selected_by_wall_coverage(tmp_path):
+    """With poses + capture times, the render reference is the frame that
+    shows the walls most completely — not simply the newest upload."""
+    import json as _json
+
+    from tests.test_understanding import upload_with_poses
+
+    visualizer = FakeVisualizer()
+    client, store = make_client(tmp_path, visualizer)
+    session_id = upload_with_poses(client).json()["session_id"]
+
+    # Overwrite poses with a close-up (t=1) and a wide view (t=5) of w1,
+    # with intrinsics so projection can run.
+    intr = {"fx": 1000.0, "fy": 1000.0, "cx": 960.0, "cy": 540.0, "w": 1920, "h": 1080}
+    poses = [
+        {"t": 1.0, "transform": [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1.25, 0, 1], **intr},
+        {"t": 5.0, "transform": [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1.25, 2.8, 1], **intr},
+    ]
+    (store.session_dir(session_id) / "poses.json").write_text(_json.dumps(poses))
+
+    wide = b"\xff\xd8\xff\xe0WIDE" + b"x" * 50
+    close = b"\xff\xd8\xff\xe0CLOSE" + b"x" * 50
+    client.post(f"/sessions/{session_id}/photos",
+                files={"photo": ("p.jpg", wide, "image/jpeg")},
+                data={"kind": "before", "t": "5.0"})
+    # The close-up uploads LAST — the old rule would have picked it.
+    client.post(f"/sessions/{session_id}/photos",
+                files={"photo": ("p.jpg", close, "image/jpeg")},
+                data={"kind": "before", "t": "1.0"})
+
+    assert client.post(f"/sessions/{session_id}/visualize").status_code == 200
+    assert visualizer.photos == [wide]
 
 
 def test_visualize_requires_before_photo(tmp_path):

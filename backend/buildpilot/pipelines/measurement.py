@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Sequence
 
-from buildpilot.models.session import RoomMeasurement
+from buildpilot.models.session import RoomMeasurement, WallDetail
 
 # Area-weighted confidence values per RoomPlan confidence level.
 CONFIDENCE_WEIGHTS = {"high": 1.0, "medium": 0.65, "low": 0.3}
@@ -148,17 +148,19 @@ def _distance_to_segment(point: tuple, start: tuple, end: tuple) -> float:
 
 def _fixed_object_wall_deduction(
     objects: List[Dict[str, Any]], walls: List[Dict[str, Any]]
-) -> tuple[float, int, int]:
+) -> tuple[float, int, int, Dict[int, float]]:
     """Wall area hidden behind built-in (fixed) objects, in m².
 
     A fixed object touching a wall (within clearance) blocks a wall patch of
     its width × its height. Movable furniture is assumed moved before
     painting and never deducted — that's what a professional does.
-    Returns (deduction_m2, fixed_count, movable_count).
+    Returns (deduction_m2, fixed_count, movable_count, per_wall_deduction)
+    where per_wall_deduction maps wall index → deducted m².
     """
     segments = _wall_segments(walls)
     deduction = 0.0
     fixed = movable = 0
+    per_wall: Dict[int, float] = {}
     for obj in objects:
         category = _object_category(obj)
         dims = obj.get("dimensions") or []
@@ -176,14 +178,70 @@ def _fixed_object_wall_deduction(
         center = (cols[3][0], cols[3][2])
         reach = depth / 2.0 + WALL_CONTACT_CLEARANCE_M
         best = None
-        for start, end, wall_height in segments:
+        best_wall = None
+        for index, (start, end, wall_height) in enumerate(segments):
             distance = _distance_to_segment(center, start, end)
             if distance <= reach:
                 patch = max(width, 0.0) * max(min(height, wall_height), 0.0)
-                best = patch if best is None else max(best, patch)
+                if best is None or patch > best:
+                    best, best_wall = patch, index
         if best:
             deduction += best
-    return deduction, fixed, movable
+            per_wall[best_wall] = per_wall.get(best_wall, 0.0) + best
+    return deduction, fixed, movable, per_wall
+
+
+def _nearest_wall_index(
+    surface: Dict[str, Any], segments: List[tuple]
+) -> int | None:
+    """The wall a door/window/opening belongs to: nearest wall line to its
+    centre on the ground plane."""
+    cols = _transform_columns(surface)
+    if cols is None or not segments:
+        return None
+    center = (cols[3][0], cols[3][2])
+    best = None
+    best_index = None
+    for index, (start, end, _height) in enumerate(segments):
+        distance = _distance_to_segment(center, start, end)
+        if best is None or distance < best:
+            best, best_index = distance, index
+    return best_index
+
+
+def _wall_details(
+    walls: List[Dict[str, Any]],
+    openings_all: List[Dict[str, Any]],
+    per_wall_fixed_deduction: Dict[int, float],
+) -> List[WallDetail]:
+    """Per-wall breakdown with doors/windows/openings and built-in
+    deductions assigned to their nearest wall. Ids are positional ("w1"...),
+    stable because the CapturedRoom JSON is stored verbatim and immutable."""
+    segments = _wall_segments(walls)
+    opening_by_wall: Dict[int, float] = {}
+    for surface in openings_all:
+        index = _nearest_wall_index(surface, segments)
+        if index is not None:
+            opening_by_wall[index] = opening_by_wall.get(index, 0.0) + _surface_area_m2(surface)
+
+    details: List[WallDetail] = []
+    for index, wall in enumerate(walls):
+        dims = wall.get("dimensions") or []
+        width = max(float(dims[0]), 0.0) if len(dims) > 0 else 0.0
+        height = max(float(dims[1]), 0.0) if len(dims) > 1 else 0.0
+        gross = width * height
+        opening = min(opening_by_wall.get(index, 0.0), gross)
+        fixed_ded = per_wall_fixed_deduction.get(index, 0.0)
+        net = max(gross - opening - fixed_ded, 0.0)
+        details.append(WallDetail(
+            wall_id=f"w{index + 1}",
+            width_m=round(width, 2),
+            height_m=round(height, 2),
+            gross_area_m2=round(gross, 2),
+            opening_area_m2=round(opening, 2),
+            net_area_m2=round(net, 2),
+        ))
+    return details
 
 
 def _floor_perimeter_m(floors: List[Dict[str, Any]]) -> float:
@@ -285,7 +343,9 @@ class RoomPlanMeasurementEngine:
         # Painter knowledge: walls behind built-ins aren't paintable;
         # movable furniture is moved and protected, so it costs no area.
         objects = captured_room.get("objects") or []
-        fixed_deduction, fixed_count, movable_count = _fixed_object_wall_deduction(objects, walls)
+        fixed_deduction, fixed_count, movable_count, per_wall_fixed = (
+            _fixed_object_wall_deduction(objects, walls)
+        )
         if fixed_deduction > 0:
             net_wall = max(net_wall - fixed_deduction, 0.0)
             notes.append(
@@ -345,5 +405,6 @@ class RoomPlanMeasurementEngine:
             confidence_score=round(min(max(confidence, 0.0), 1.0), 2),
             fixed_objects=fixed_count,
             movable_objects=movable_count,
+            walls=_wall_details(walls, doors + windows + openings, per_wall_fixed),
             notes=notes,
         )

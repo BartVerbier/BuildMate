@@ -59,10 +59,33 @@ class DeterministicEstimator:
         # --- area to paint ---------------------------------------------------
         area_m2 = 0.0
         if scope.walls:
-            area_m2 += measurements.net_wall_area_m2
-            assumptions.append(
-                f"Walls included: net wall area {measurements.net_wall_area_m2:.2f} m2"
-            )
+            selected = [
+                w for w in measurements.walls
+                if w.wall_id in requirements.painted_wall_ids
+            ]
+            if requirements.painted_wall_ids and selected:
+                # The conversation limited painting to specific walls: price
+                # exactly those. Estimated wall completion (uncaptured walls)
+                # never applies here — the painter pointed at real walls.
+                wall_area = sum(w.net_area_m2 for w in selected)
+                area_m2 += wall_area
+                described = ", ".join(
+                    f"{w.wall_id} ({w.width_m:.2f}x{w.height_m:.2f} m)" for w in selected
+                )
+                assumptions.append(
+                    f"Painting {len(selected)} of {len(measurements.walls)} walls "
+                    f"per conversation: {described} = {wall_area:.2f} m2"
+                )
+            else:
+                if requirements.painted_wall_ids and not selected:
+                    assumptions.append(
+                        "Requested wall selection did not match the scan; "
+                        "all walls included — verify before quoting"
+                    )
+                area_m2 += measurements.net_wall_area_m2
+                assumptions.append(
+                    f"Walls included: net wall area {measurements.net_wall_area_m2:.2f} m2"
+                )
         else:
             assumptions.append("Walls excluded per conversation")
         if scope.ceiling:

@@ -351,6 +351,17 @@ struct EstimateView: View {
 
     private func measurementsCard(_ m: RoomMeasurement) -> some View {
         Card(title: "Room") {
+            // Smallest-possible confirmation: when the conversation limited
+            // painting to specific walls, say so where the painter reads back
+            // the quote — one glance verifies the understanding.
+            if let sel = session.wallSelection {
+                LabeledRow(
+                    "Painting",
+                    value: "\(sel.selected) of \(sel.total) walls · \(Format.squareMetres(sel.areaM2))",
+                    symbol: "scope"
+                )
+                Divider().padding(.vertical, 2)
+            }
             LabeledRow("Walls (net)", value: Format.squareMetres(m.netWallAreaM2))
             LabeledRow("Ceiling", value: Format.squareMetres(m.ceilingAreaM2))
             LabeledRow("Floor", value: Format.squareMetres(m.floorAreaM2))

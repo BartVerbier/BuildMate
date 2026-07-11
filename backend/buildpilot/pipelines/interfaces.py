@@ -37,9 +37,14 @@ class Transcriber(Protocol):
 
 
 class RequirementsExtractor(Protocol):
-    """May be AI-backed (LLM). Must return the structured contract, nothing more."""
+    """May be AI-backed (LLM). Must return the structured contract, nothing more.
 
-    def extract(self, transcript: str) -> RequirementExtraction: ...
+    `room_context` is an optional wall inventory (ids + dimensions) that
+    grounds wall-targeting; implementations may ignore it."""
+
+    def extract(
+        self, transcript: str, room_context: str | None = None
+    ) -> RequirementExtraction: ...
 
 
 class Estimator(Protocol):

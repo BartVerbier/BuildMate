@@ -31,6 +31,7 @@ ROOM_SCAN_FILE = "room.json"
 AUDIO_FILE = "audio.m4a"
 SESSION_FILE = "session.json"
 TRANSCRIPT_FILE = "transcript.txt"
+POSES_FILE = "poses.json"
 
 
 class SessionStore:
@@ -123,3 +124,15 @@ class SessionStore:
 
     def write_artifact(self, session: Session, file_name: str, content: str) -> None:
         (self.session_dir(session.session_id) / file_name).write_text(content)
+
+    def load_poses(self, session: Session) -> list:
+        """Camera pose log recorded during the scan ([{t, transform, fx...}]),
+        or [] when the phone didn't send one (older app builds)."""
+        path = self.session_dir(session.session_id) / POSES_FILE
+        if not path.exists():
+            return []
+        try:
+            poses = json.loads(path.read_text())
+        except ValueError:
+            return []
+        return poses if isinstance(poses, list) else []

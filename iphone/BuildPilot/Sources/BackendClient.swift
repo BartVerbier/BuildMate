@@ -9,7 +9,7 @@ import Foundation
 /// see BackendLocator.
 protocol BackendClient {
     func isReachable() async -> Bool
-    func submitVisit(roomScan: Data, audioFile: URL?) async throws -> SessionResponse
+    func submitVisit(roomScan: Data, audioFile: URL?, poses: Data?) async throws -> SessionResponse
 }
 
 /// HTTP implementation of the Build Pilot backend API
@@ -43,7 +43,7 @@ struct HTTPBackendClient: BackendClient {
         }
     }
 
-    func submitVisit(roomScan: Data, audioFile: URL?) async throws -> SessionResponse {
+    func submitVisit(roomScan: Data, audioFile: URL?, poses: Data? = nil) async throws -> SessionResponse {
         var request = URLRequest(url: baseURL.appendingPathComponent("sessions"))
         request.httpMethod = "POST"
         // Transcription on the backend can take a while for long visits; the
@@ -59,6 +59,10 @@ struct HTTPBackendClient: BackendClient {
         if let audioFile, let audioData = try? Data(contentsOf: audioFile) {
             appendPart(&body, boundary: boundary, name: "audio",
                        fileName: "visit.m4a", contentType: "audio/mp4", data: audioData)
+        }
+        if let poses {
+            appendPart(&body, boundary: boundary, name: "poses",
+                       fileName: "poses.json", contentType: "application/json", data: poses)
         }
         body.append(Data("--\(boundary)--\r\n".utf8))
         request.httpBody = body
@@ -125,7 +129,9 @@ struct HTTPBackendClient: BackendClient {
 
     /// Archives a visit photo to the backend's session directory (the
     /// permanent project record). Best-effort: the phone keeps its own copy.
-    func uploadPhoto(sessionID: String, kind: String, jpeg: Data) async throws {
+    /// `t` is the capture time on the visit clock — it links the photo to a
+    /// camera pose for reference-frame selection.
+    func uploadPhoto(sessionID: String, kind: String, jpeg: Data, t: Double? = nil) async throws {
         var request = URLRequest(url: baseURL.appendingPathComponent("sessions/\(sessionID)/photos"))
         request.httpMethod = "POST"
         request.timeoutInterval = 60
@@ -136,6 +142,10 @@ struct HTTPBackendClient: BackendClient {
         var body = Data()
         body.append(Data("--\(boundary)\r\n".utf8))
         body.append(Data("Content-Disposition: form-data; name=\"kind\"\r\n\r\n\(kind)\r\n".utf8))
+        if let t {
+            body.append(Data("--\(boundary)\r\n".utf8))
+            body.append(Data("Content-Disposition: form-data; name=\"t\"\r\n\r\n\(t)\r\n".utf8))
+        }
         appendPart(&body, boundary: boundary, name: "photo",
                    fileName: "photo.jpg", contentType: "image/jpeg", data: jpeg)
         body.append(Data("--\(boundary)--\r\n".utf8))

@@ -9,14 +9,14 @@ from tests.test_server_e2e import FakeTranscriber, make_client, upload
 class RevisingExtractor:
     """Fake extractor whose revise() adds the ceiling back in."""
 
-    def extract(self, transcript):
+    def extract(self, transcript, room_context=None):
         return RequirementExtraction(
             scope_of_work=["Paint the walls"],
             exclusions=["Ceiling"],
             paint_scope=PaintScope(walls=True, ceiling=False),
         )
 
-    def revise(self, current, transcript):
+    def revise(self, current, transcript, room_context=None):
         assert "ceiling" in transcript.lower()
         updated = current.model_copy(
             update={

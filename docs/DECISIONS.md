@@ -279,6 +279,38 @@ returns `render_required` and the phone re-requests renders through POST
 protected → finished) appears in the app and the PDF. Visit records preserve
 their photos when a revision replaces the session content.
 
+## Decision 27: Gaze-grounded wall understanding (2026-07-11, pre-Railway)
+
+The camera pose IS the painter's pointing finger. During a scan the phone
+now logs timestamped camera poses + intrinsics (poses.json, same world
+frame as the RoomPlan geometry, clock zeroed at audio start). The backend:
+
+1. keeps Whisper's timed segments (segments.json);
+2. ray-casts poses against the CapturedRoom walls (pipelines/gaze.py —
+   deterministic geometry, never AI) and annotates each spoken segment
+   with the wall the camera dwelled on ("[facing w2]", gaze.json);
+3. hands the extractor the annotated transcript plus a wall inventory
+   (positional ids "w1", "w2"… from the new per-wall measurement
+   breakdown, RoomMeasurement.walls); the model may fill
+   painted_wall_ids ONLY from that inventory, and unknown ids are
+   dropped by the pipeline — the LLM maps language onto given geometry,
+   it never invents geometry;
+4. the deterministic estimator prices exactly the selected walls
+   (doors/windows and built-in deductions are assigned per wall).
+   Estimated wall completion (Decision 26) never applies to an explicit
+   selection. Empty selection = all walls = the historical behavior.
+
+Confirmation is the read-back: the app and the PDF state "Painting 1 of 4
+walls · 13.1 m²" so a wrong understanding is visible at a glance and fixed
+by voice through Make Changes. Below the gaze dominance threshold the
+resolver reports nothing rather than guessing.
+
+The same pose log fixes reference-photo quality: /visualize projects the
+painted walls through each archived Before photo's pose and renders from
+the frame with the highest wall coverage (slightly wider than the work
+area) instead of simply the newest upload. Without poses (older builds)
+every path degrades to the previous behavior.
+
 ## Rationale
 
 These decisions are intended to reduce complexity and increase the likelihood of building a working prototype quickly. The core value proposition is not the scanning technology itself, but the automation of the site visit and the generation of a useful draft estimate.
