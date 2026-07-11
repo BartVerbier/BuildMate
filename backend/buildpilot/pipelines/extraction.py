@@ -37,6 +37,10 @@ Rules:
 - paint_scope.walls / paint_scope.ceiling: whether that surface should be
   painted. Default to walls=true. Set ceiling=false only if the conversation
   excludes it; if the ceiling is never mentioned, leave ceiling=true.
+- Painter knowledge: natural wood (beams, doors, furniture), stone, glass,
+  windows, radiators, trim and skirting are normally NOT painted. Only add
+  them to scope_of_work if the customer explicitly asks; if the customer
+  explicitly declines them, record that in exclusions.
 - The transcript may contain filler and unrelated small talk; ignore it."""
 
 

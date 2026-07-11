@@ -22,6 +22,17 @@ UNKNOWN_CONFIDENCE = 0.5
 # A parsed floor smaller than this is treated as a degenerate scan artefact.
 MIN_PLAUSIBLE_FLOOR_M2 = 0.5
 
+# Painter knowledge: RoomPlan object categories that are FIXED — built in,
+# not moved for painting, so the wall behind them is not paintable.
+FIXED_OBJECT_CATEGORIES = {
+    "storage", "refrigerator", "oven", "dishwasher", "sink", "bathtub",
+    "toilet", "stove", "washerdryer", "fireplace", "stairs",
+}
+# Everything else (sofa, table, chair, television, bed, ...) is MOVABLE:
+# a professional moves and protects it before painting — no deduction.
+# An object counts as wall-adjacent within this clearance of a wall line.
+WALL_CONTACT_CLEARANCE_M = 0.30
+
 
 class MeasurementError(ValueError):
     """Raised when a scan cannot yield meaningful measurements."""
@@ -84,6 +95,81 @@ def _polygon_area_m2(corners: Sequence[Sequence[float]]) -> float:
     return abs(area) / 2.0
 
 
+def _object_category(obj: Dict[str, Any]) -> str:
+    raw = obj.get("category")
+    if isinstance(raw, str):
+        return raw.lower()
+    if isinstance(raw, dict) and raw:
+        return next(iter(raw)).lower()
+    return ""
+
+
+def _wall_segments(walls: List[Dict[str, Any]]) -> List[tuple]:
+    """(start, end, height) per wall on the ground plane (world x/z)."""
+    segments = []
+    for wall in walls:
+        cols = _transform_columns(wall)
+        dims = wall.get("dimensions") or []
+        if cols is None or len(dims) < 2:
+            continue
+        half = float(dims[0]) / 2.0
+        x_axis, t = cols[0], cols[3]
+        start = (t[0] - half * x_axis[0], t[2] - half * x_axis[2])
+        end = (t[0] + half * x_axis[0], t[2] + half * x_axis[2])
+        segments.append((start, end, float(dims[1])))
+    return segments
+
+
+def _distance_to_segment(point: tuple, start: tuple, end: tuple) -> float:
+    px, pz = point
+    sx, sz = start
+    ex, ez = end
+    dx, dz = ex - sx, ez - sz
+    length_sq = dx * dx + dz * dz
+    if length_sq == 0:
+        return ((px - sx) ** 2 + (pz - sz) ** 2) ** 0.5
+    t = max(0.0, min(1.0, ((px - sx) * dx + (pz - sz) * dz) / length_sq))
+    cx, cz = sx + t * dx, sz + t * dz
+    return ((px - cx) ** 2 + (pz - cz) ** 2) ** 0.5
+
+
+def _fixed_object_wall_deduction(
+    objects: List[Dict[str, Any]], walls: List[Dict[str, Any]]
+) -> tuple[float, int, int]:
+    """Wall area hidden behind built-in (fixed) objects, in m².
+
+    A fixed object touching a wall (within clearance) blocks a wall patch of
+    its width × its height. Movable furniture is assumed moved before
+    painting and never deducted — that's what a professional does.
+    Returns (deduction_m2, fixed_count, movable_count).
+    """
+    segments = _wall_segments(walls)
+    deduction = 0.0
+    fixed = movable = 0
+    for obj in objects:
+        category = _object_category(obj)
+        dims = obj.get("dimensions") or []
+        cols = _transform_columns(obj)
+        if not category or len(dims) < 3 or cols is None:
+            continue
+        if category not in FIXED_OBJECT_CATEGORIES:
+            movable += 1
+            continue
+        fixed += 1
+        width, height, depth = float(dims[0]), float(dims[1]), float(dims[2])
+        center = (cols[3][0], cols[3][2])
+        reach = depth / 2.0 + WALL_CONTACT_CLEARANCE_M
+        best = None
+        for start, end, wall_height in segments:
+            distance = _distance_to_segment(center, start, end)
+            if distance <= reach:
+                patch = max(width, 0.0) * max(min(height, wall_height), 0.0)
+                best = patch if best is None else max(best, patch)
+        if best:
+            deduction += best
+    return deduction, fixed, movable
+
+
 def _wall_footprint_bbox_area_m2(walls: List[Dict[str, Any]]) -> float:
     """Fallback floor estimate: bounding box of wall endpoints on the ground plane.
 
@@ -130,6 +216,20 @@ class RoomPlanMeasurementEngine:
                 f"Subtracted {opening_area:.2f} m2 of open doorways from wall area"
             )
 
+        # Painter knowledge: walls behind built-ins aren't paintable;
+        # movable furniture is moved and protected, so it costs no area.
+        objects = captured_room.get("objects") or []
+        fixed_deduction, fixed_count, movable_count = _fixed_object_wall_deduction(objects, walls)
+        if fixed_deduction > 0:
+            net_wall = max(net_wall - fixed_deduction, 0.0)
+            notes.append(
+                f"Deducted {fixed_deduction:.2f} m2 of wall behind {fixed_count} built-in unit(s)"
+            )
+        if movable_count > 0:
+            notes.append(
+                f"{movable_count} movable furniture item(s) assumed moved and protected before painting"
+            )
+
         # Floor: prefer the scanned floor polygon, fall back to dimensions,
         # then to the wall footprint.
         floor_area = sum(_polygon_area_m2(f.get("polygonCorners") or []) for f in floors)
@@ -147,7 +247,10 @@ class RoomPlanMeasurementEngine:
                 )
 
         ceiling_area = floor_area
-        notes.append("Ceiling area assumed equal to floor area (V1 assumption)")
+        notes.append(
+            "Ceiling area assumed equal to floor area; flat ceiling assumed — "
+            "exposed beams are not detectable from the scan and need manual review"
+        )
 
         # Area-weighted confidence over the surfaces that drive the estimate.
         surfaces = walls + floors

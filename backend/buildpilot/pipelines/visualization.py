@@ -54,12 +54,15 @@ def build_instruction(requirements: RequirementExtraction) -> str:
         "except the finishes listed above."
     )
     lines.append(
-        "QUALITY: The result should look professionally photographed — clean, "
-        "even, natural lighting consistent with the original photo; true, "
-        "freshly-painted colours; crisp edges along trim and corners. Show as "
-        "much of the painted walls as the original frame allows — never crop "
-        "walls tighter than the source image. Photorealistic only, no "
-        "artistic reinterpretation."
+        "QUALITY: The result should look professionally photographed and "
+        "professionally executed — clean, even, natural lighting consistent "
+        "with the original photo; true, freshly-painted colours with crisp, "
+        "masked-quality edges along trim, corners and the ceiling line, as if "
+        "finished by master painters. Natural wood, stone, glass, windows, "
+        "radiators and trim keep their original finish unless explicitly "
+        "listed above. Show as much of the painted walls as the original "
+        "frame allows — never crop walls tighter than the source image. "
+        "Photorealistic only, no artistic reinterpretation."
     )
     return "\n".join(lines)
 

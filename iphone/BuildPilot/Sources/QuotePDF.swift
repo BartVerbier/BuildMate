@@ -314,7 +314,13 @@ private struct DetailPage: View {
                     Line("Painting", duration.painting)
                     Line("Total duration", duration.total)
                 }
-                if !r.exclusions.isEmpty { bullets("Not Included", r.exclusions) }
+                SectionTitle("Not Included")
+                ForEach(r.exclusions, id: \.self) { item in
+                    Text("•  \(item)").font(.system(size: 10.5)).padding(.vertical, 0.5)
+                }
+                Text("•  As standard: woodwork, trim, glass, stone, radiators and natural wood are left unpainted unless requested.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
                 let suggestions = WorkPlan.recommendations(for: r)
                 if !suggestions.isEmpty {
                     SectionTitle("Worth Considering (optional)")

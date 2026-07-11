@@ -99,6 +99,42 @@ def test_transform_accepts_nested_and_flat_encodings():
     assert _transform_columns({"transform": flat})[3][:3] == [1.0, 2.0, 3.0]
 
 
+def test_fixed_objects_deduct_wall_area_movable_do_not(captured_room):
+    """Painter logic: built-ins block the wall behind them; movable
+    furniture is moved before painting and costs nothing."""
+    captured_room["objects"] = [
+        {   # built-in wardrobe against the north wall (z=-1.5): FIXED
+            "category": {"storage": {}},
+            "dimensions": [2.0, 2.2, 0.6],
+            "transform": [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0.0, 1.1, -1.15, 1]],
+        },
+        {   # sofa near the south wall: MOVABLE — no deduction
+            "category": {"sofa": {}},
+            "dimensions": [2.2, 0.9, 0.9],
+            "transform": [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0.0, 0.45, 1.0, 1]],
+        },
+    ]
+    result = RoomPlanMeasurementEngine().measure(captured_room)
+
+    # base net 37.0 − wardrobe 2.0 x 2.2 = 32.6
+    assert result.net_wall_area_m2 == 32.6
+    assert result.paintable_surface_area_m2 == 47.6
+    assert any("built-in" in note for note in result.notes)
+    assert any("movable furniture" in note for note in result.notes)
+
+
+def test_fixed_object_away_from_walls_costs_nothing(captured_room):
+    captured_room["objects"] = [
+        {   # kitchen island in the middle of the room: fixed but not on a wall
+            "category": {"storage": {}},
+            "dimensions": [1.5, 0.9, 0.8],
+            "transform": [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0.0, 0.45, 0.0, 1]],
+        }
+    ]
+    result = RoomPlanMeasurementEngine().measure(captured_room)
+    assert result.net_wall_area_m2 == 37.0
+
+
 def test_polygon_area_l_shape():
     # L-shape: 4x3 rectangle minus a 2x1 corner = 10 m2, in the x-y plane
     corners = [[0, 0, 0], [4, 0, 0], [4, 2, 0], [2, 2, 0], [2, 3, 0], [0, 3, 0]]

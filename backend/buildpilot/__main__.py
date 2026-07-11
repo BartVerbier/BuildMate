@@ -109,6 +109,11 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8787)
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--no-warmup", action="store_true", help="skip Whisper warm-up")
+    parser.add_argument(
+        "--reload", action="store_true",
+        help="dev: auto-restart when backend code changes (a stale server "
+             "silently 404s new endpoints — this prevents that)",
+    )
     args = parser.parse_args()
 
     loaded_keys = load_env_file()
@@ -142,7 +147,10 @@ def main() -> None:
         )
 
     try:
-        uvicorn.run("buildpilot.server:app", host=args.host, port=args.port, log_level="info")
+        uvicorn.run(
+            "buildpilot.server:app", host=args.host, port=args.port,
+            log_level="info", reload=args.reload,
+        )
     finally:
         if bonjour:
             bonjour.terminate()
