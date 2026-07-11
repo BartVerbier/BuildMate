@@ -211,22 +211,24 @@ final class VisitController: ObservableObject {
     /// photos, archive them, then request the AI visualization. All
     /// best-effort and in the background — the estimate is never delayed.
     private func finalizeVisitMedia(sessionID: String, backendURL: URL) {
-        let frames = roomCapture.bestBeforePhotos()
+        let frames = roomCapture.bestBeforePhotos() // best-first
         visitLog.info("Auto-captured \(frames.count) Before photos from the scan")
 
         var savedPhotos: [VisitPhoto] = []
         for image in frames {
             if let photo = PhotoStore.save(image, visitID: sessionID, kind: .before) {
                 history.addPhoto(photo, to: sessionID)
-                savedPhotos.append(photo)
+                savedPhotos.append(photo) // record order = best-first (drives app + PDF)
             }
         }
 
         visualizationPending = true
         Task { [weak self] in
             let client = HTTPBackendClient(baseURL: backendURL)
-            // 1. Archive the Before photos (the render needs one server-side).
-            for photo in savedPhotos {
+            // 1. Archive the Before photos. Reversed: the backend renders
+            //    from the newest-numbered archive, so the BEST frame is
+            //    uploaded last and becomes the visualization reference.
+            for photo in savedPhotos.reversed() {
                 guard let jpeg = PhotoStore.jpegData(photo, visitID: sessionID) else { continue }
                 do {
                     try await client.uploadPhoto(sessionID: sessionID, kind: "before", jpeg: jpeg)

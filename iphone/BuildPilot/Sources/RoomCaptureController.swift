@@ -30,8 +30,19 @@ final class RoomCaptureController: NSObject, ObservableObject {
     private static let maxKeptFrames = 3
     private static let ciContext = CIContext()
 
+    /// A sampled frame with its quality score. Scoring criteria:
+    /// - sharpness: variance of the Laplacian on a 64x64 grayscale thumb
+    /// - levelness: camera pitch from ARKit — a level camera faces walls
+    ///   (the best proxy for "largest visible wall" without semantic vision)
+    /// - exposure: luma mean distance from ideal — penalizes dark/blown frames
+    struct FrameCandidate {
+        let jpeg: Data
+        let score: Double
+        let detail: String // for diagnostics: "sharp 0.71 level 0.94 expo 0.88"
+    }
+
     private var frameTimer: Timer?
-    private var frameCandidates: [(score: Int, jpeg: Data)] = []
+    private var frameCandidates: [FrameCandidate] = []
 
     override init() {
         captureView = RoomCaptureView(frame: .zero)
@@ -61,14 +72,13 @@ final class RoomCaptureController: NSObject, ObservableObject {
         captureView.captureSession.stop()
     }
 
-    /// The sharpest frames captured during the scan, ready to be saved as
-    /// the visit's Before photos. Call after stop().
+    /// The best-scoring frames from the scan, ordered best-first, ready to
+    /// be saved as the visit's Before photos. Call after stop().
     func bestBeforePhotos() -> [UIImage] {
         let selected = frameCandidates
             .sorted { $0.score > $1.score }
             .prefix(Self.maxKeptFrames)
-        let allScores = frameCandidates.map { $0.score / 1024 }.sorted(by: >)
-        visitLog.info("Before-photo selection: \(self.frameCandidates.count) candidates, scores(kB)=\(allScores), selected top \(selected.count)")
+        visitLog.info("Before-photo selection: \(self.frameCandidates.count) candidates → kept \(selected.count): \(selected.map(\.detail).joined(separator: " | "))")
         return selected.compactMap { UIImage(data: $0.jpeg) }
     }
 
@@ -76,19 +86,68 @@ final class RoomCaptureController: NSObject, ObservableObject {
         guard isScanning,
               let frame = captureView.captureSession.arSession.currentFrame
         else { return }
+
+        // Levelness: pitch 0 = camera level (facing walls). Frames aimed at
+        // floor/ceiling score toward 0. Ties naturally prefer the frame with
+        // the most wall in view.
+        let pitch = Double(frame.camera.eulerAngles.x)
+        let levelness = max(0, 1 - abs(pitch) / (.pi / 4))
+
         let ciImage = CIImage(cvPixelBuffer: frame.capturedImage)
         guard let cgImage = Self.ciContext.createCGImage(ciImage, from: ciImage.extent) else { return }
+        let (sharpness, exposure) = Self.imageQuality(cgImage)
+
+        let score = 0.45 * sharpness + 0.35 * levelness + 0.20 * exposure
         // Sensor frames are landscape; rotate to the portrait the painter saw.
         let image = UIImage(cgImage: cgImage, scale: 1, orientation: .right)
         guard let jpeg = image.jpegData(compressionQuality: 0.8) else { return }
 
-        frameCandidates.append((score: jpeg.count, jpeg: jpeg))
+        let detail = String(format: "sharp %.2f level %.2f expo %.2f → %.2f", sharpness, levelness, exposure, score)
+        frameCandidates.append(FrameCandidate(jpeg: jpeg, score: score, detail: detail))
         // Bound memory: keep only the best dozen candidates while scanning.
         if frameCandidates.count > 12 {
             frameCandidates.sort { $0.score > $1.score }
             frameCandidates.removeLast(frameCandidates.count - 12)
         }
-        visitLog.debug("Sampled scan frame (\(jpeg.count / 1024) kB), candidates: \(self.frameCandidates.count)")
+        visitLog.debug("Sampled frame: \(detail)")
+    }
+
+    /// Sharpness (Laplacian variance) and exposure quality from a 64x64
+    /// grayscale thumbnail. Deterministic, ~instant.
+    private static func imageQuality(_ cgImage: CGImage) -> (sharpness: Double, exposure: Double) {
+        let side = 64
+        var pixels = [UInt8](repeating: 0, count: side * side)
+        guard let context = CGContext(
+            data: &pixels, width: side, height: side, bitsPerComponent: 8,
+            bytesPerRow: side, space: CGColorSpaceCreateDeviceGray(),
+            bitmapInfo: CGImageAlphaInfo.none.rawValue
+        ) else { return (0.5, 0.5) }
+        context.interpolationQuality = .medium
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: side, height: side))
+
+        // Laplacian variance
+        var laplacians: [Double] = []
+        laplacians.reserveCapacity((side - 2) * (side - 2))
+        var lumaSum = 0.0
+        for y in 1 ..< side - 1 {
+            for x in 1 ..< side - 1 {
+                let i = y * side + x
+                let center = Double(pixels[i])
+                let lap = 4 * center
+                    - Double(pixels[i - 1]) - Double(pixels[i + 1])
+                    - Double(pixels[i - side]) - Double(pixels[i + side])
+                laplacians.append(lap)
+                lumaSum += center
+            }
+        }
+        let mean = laplacians.reduce(0, +) / Double(laplacians.count)
+        let variance = laplacians.reduce(0) { $0 + ($1 - mean) * ($1 - mean) } / Double(laplacians.count)
+        let sharpness = min(variance / 400.0, 1.0)
+
+        // Exposure: ideal mean luma ~128; linear falloff to 0 at the extremes.
+        let luma = lumaSum / Double(laplacians.count)
+        let exposure = max(0, 1 - abs(luma - 128) / 128)
+        return (sharpness, exposure)
     }
 }
 

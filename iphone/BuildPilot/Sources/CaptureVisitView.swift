@@ -74,10 +74,12 @@ struct CaptureVisitView: View {
             visit.finishVisit()
         } label: {
             Label("Finish Visit", systemImage: "checkmark")
-                .font(.title3.weight(.semibold))
-                .frame(maxWidth: .infinity, minHeight: 56)
+                .font(.title3.weight(.bold))
+                .frame(maxWidth: .infinity, minHeight: 58)
         }
         .buttonStyle(.borderedProminent)
+        .tint(.yellow)
+        .foregroundStyle(.black)
         .padding(.horizontal, 20)
         .padding(.bottom, 12)
     }

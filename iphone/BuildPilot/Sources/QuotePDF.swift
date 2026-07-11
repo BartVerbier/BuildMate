@@ -17,20 +17,22 @@ enum QuotePDF {
         identity: BusinessIdentity,
         record: VisitRecord?
     ) -> URL? {
-        // Presentation order: cover → Current Room → Proposed Result →
-        // Scope of Work → Price Breakdown (→ Completed Result, post-job).
+        // Premium quotation: Page 1 executive summary → Page 2 the
+        // transformation (current room + AI preview) → Page 3 scope,
+        // materials, preparation and pricing (→ Completed Result post-job).
         let photos = record?.photos ?? []
         let visitID = session.sessionId
         var pages: [AnyView] = [
             AnyView(SummaryPage(session: session, visitName: visitName, identity: identity, record: record))
         ]
-        pages += photoPages(title: "Current Room",
-                            photos: photos.filter { $0.kind == .before }, visitID: visitID)
-        pages += photoPages(title: "Proposed Result",
-                            photos: photos.filter { $0.kind == .visualization }, visitID: visitID,
-                            caption: "AI visualization generated from a photo of this room, showing only the requested finishes. Final result may vary slightly.")
+        let bestBefore = photos.first { $0.kind == .before }
+            .flatMap { PhotoStore.load($0, visitID: visitID) }
+        let preview = photos.last { $0.kind == .visualization }
+            .flatMap { PhotoStore.load($0, visitID: visitID) }
+        if bestBefore != nil || preview != nil {
+            pages.append(AnyView(TransformPage(before: bestBefore, preview: preview)))
+        }
         pages.append(AnyView(DetailPage(session: session, identity: identity)))
-        pages.append(AnyView(PricePage(session: session, identity: identity)))
         pages += photoPages(title: "Completed Result",
                             photos: photos.filter { $0.kind == .after }, visitID: visitID)
 
@@ -235,8 +237,22 @@ private struct SummaryPage: View {
                 }
                 .padding(.vertical, 14)
                 Divide()
-                Text("The following pages show your room today, the proposed result, the full scope of work, and the price breakdown.")
-                    .font(.system(size: 11))
+
+                if let r = session.requirements, r.transcriptAvailable {
+                    SectionTitle("Summary")
+                    Text(ConversationSummary.sentence(for: r))
+                        .font(.system(size: 12.5))
+                        .lineSpacing(3)
+                        .padding(.bottom, 4)
+                    if !r.scopeOfWork.isEmpty {
+                        SectionTitle("What's included")
+                        ForEach(r.scopeOfWork.prefix(4), id: \.self) { item in
+                            Text("•  \(item)").font(.system(size: 11.5)).padding(.vertical, 1)
+                        }
+                    }
+                }
+                Text("The following pages show your room today, the proposed result, and the full scope with pricing.")
+                    .font(.system(size: 10))
                     .foregroundStyle(.secondary)
                     .padding(.top, 12)
             }
@@ -269,7 +285,7 @@ private struct DetailPage: View {
 
     var body: some View {
         PageChrome {
-            Text("Scope of Work")
+            Text("Scope of Work & Pricing")
                 .font(.system(size: 18, weight: .bold))
                 .padding(.bottom, 6)
             Divide()
@@ -290,16 +306,42 @@ private struct DetailPage: View {
             }
 
             if let e = session.estimate {
+                SectionTitle("Pricing")
+                Line("Labour (\(Format.hours(e.labourHours)))", Format.euro(e.labourCostEur))
+                Line("Materials", Format.euro(e.materialCostEur))
+                Line("Paint required", Format.litres(e.paintQuantityLitres))
+                Line("Primer required", Format.litres(e.primerQuantityLitres))
+                if let rate = session.companyProfile?.vatRate, rate > 0 {
+                    let vat = e.suggestedQuotationEur - e.suggestedQuotationEur / (1 + rate)
+                    Line("VAT (\(Int((rate * 100).rounded())) %)", Format.euro(vat))
+                }
+                HStack {
+                    Text("Total (incl. VAT)").font(.system(size: 13, weight: .semibold))
+                    Spacer()
+                    Text(Format.euro(e.suggestedQuotationEur))
+                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                }
+                .padding(.vertical, 5)
+                Text("The total also covers travel and overheads.")
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(.secondary)
+
                 SectionTitle("Calculation Basis")
-                ForEach(customerSafeAssumptions(e), id: \.self) { line in
+                ForEach(customerSafeAssumptions(e).prefix(5), id: \.self) { line in
                     Text("•  \(line)")
-                        .font(.system(size: 10))
+                        .font(.system(size: 9.5))
                         .foregroundStyle(.secondary)
                         .padding(.vertical, 1)
                 }
             }
 
-            Spacer(minLength: 0)
+            Spacer(minLength: 8)
+
+            SectionTitle("Terms & Conditions")
+            Text(identity.terms)
+                .font(.system(size: 9))
+                .foregroundStyle(.secondary)
+                .lineLimit(6)
         }
     }
 
@@ -320,51 +362,41 @@ private struct DetailPage: View {
     }
 }
 
-// MARK: - price breakdown page
+// MARK: - transformation page
 
-private struct PricePage: View {
-    let session: SessionResponse
-    let identity: BusinessIdentity
+private struct TransformPage: View {
+    let before: UIImage?
+    let preview: UIImage?
 
     var body: some View {
         PageChrome {
-            Text("Price Breakdown")
+            Text("Your Room")
                 .font(.system(size: 18, weight: .bold))
                 .padding(.bottom, 6)
             Divide()
 
-            if let e = session.estimate {
-                SectionTitle("Breakdown")
-                Line("Labour (\(Format.hours(e.labourHours)))", Format.euro(e.labourCostEur))
-                Line("Materials", Format.euro(e.materialCostEur))
-                Line("Paint required", Format.litres(e.paintQuantityLitres))
-                Line("Primer required", Format.litres(e.primerQuantityLitres))
-                Text("The total also covers travel and overheads.")
-                    .font(.system(size: 10))
+            if let before {
+                labeled("CURRENT ROOM", image: before)
+            }
+            if let preview {
+                labeled("AI PREVIEW — PROPOSED RESULT", image: preview)
+                Text("AI visualization generated from a photo of this room, showing only the requested finishes. Final result may vary slightly.")
+                    .font(.system(size: 9))
                     .foregroundStyle(.secondary)
                     .padding(.top, 4)
-
-                SectionTitle("Total")
-                if let rate = session.companyProfile?.vatRate, rate > 0 {
-                    let vat = e.suggestedQuotationEur - e.suggestedQuotationEur / (1 + rate)
-                    Line("VAT (\(Int((rate * 100).rounded())) %)", Format.euro(vat))
-                }
-                HStack {
-                    Text("Total (incl. VAT)").font(.system(size: 14, weight: .semibold))
-                    Spacer()
-                    Text(Format.euro(e.suggestedQuotationEur))
-                        .font(.system(size: 20, weight: .bold, design: .rounded))
-                }
-                .padding(.vertical, 6)
             }
+            Spacer(minLength: 0)
+        }
+    }
 
-            Spacer(minLength: 12)
-
-            SectionTitle("Terms & Conditions")
-            Text(identity.terms)
-                .font(.system(size: 9.5))
-                .foregroundStyle(.secondary)
-                .lineLimit(10)
+    private func labeled(_ title: String, image: UIImage) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            SectionTitle(title)
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 507, height: 300)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
         }
     }
 }

@@ -44,18 +44,31 @@ struct PhotoViewer: View {
                     .padding(.trailing, 16)
                 }
                 if photos.indices.contains(index) {
-                    Text(photos[index].kind.label)
-                        .font(.caption.weight(.semibold))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 4)
-                        .background(.ultraThinMaterial, in: Capsule())
+                    let kind = photos[index].kind
+                    Text(kind == .visualization ? "PROPOSED" : kind.label.uppercased())
+                        .font(.footnote.weight(.bold))
+                        .kerning(1.0)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 6)
+                        .background(
+                            kind == .visualization ? AnyShapeStyle(Color.yellow) : AnyShapeStyle(.ultraThinMaterial),
+                            in: Capsule()
+                        )
+                        .foregroundStyle(kind == .visualization ? .black : .white)
+                        .id(index) // re-animate on page change
+                        .transition(.opacity.combined(with: .scale(scale: 0.9)))
                 }
                 Spacer()
             }
             .padding(.top, 8)
+            .animation(.easeInOut(duration: 0.2), value: index)
         }
         .statusBarHidden()
+        .opacity(appeared ? 1 : 0)
+        .onAppear { withAnimation(.easeOut(duration: 0.25)) { appeared = true } }
     }
+
+    @State private var appeared = false
 }
 
 /// One zoomable page. UIScrollView gives the exact pinch/double-tap/pan

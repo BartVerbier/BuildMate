@@ -40,7 +40,9 @@ struct BusinessIdentity {
             phone: defaults.string(forKey: "business.phone") ?? "",
             email: defaults.string(forKey: "business.email") ?? "",
             terms: defaults.string(forKey: "business.terms") ?? Self.defaultTerms,
-            logo: UIImage(contentsOfFile: logoFileURL.path)
+            // Painter's own logo wins; otherwise the bundled placeholder
+            // keeps every quote looking like it came from a real company.
+            logo: UIImage(contentsOfFile: logoFileURL.path) ?? UIImage(named: "DefaultLogo")
         )
     }
 

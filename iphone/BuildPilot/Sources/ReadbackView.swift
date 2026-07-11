@@ -47,19 +47,21 @@ struct ReadbackView: View {
     }
 
     private var discussedCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 18) {
             if let r = requirements {
-                ForEach(r.scopeOfWork, id: \.self) { item in
-                    ReadbackLine(symbol: "checkmark.circle.fill", tint: .yellow, text: item)
-                }
-                ForEach(r.preparationRequired, id: \.self) { item in
-                    ReadbackLine(symbol: "wrench.and.screwdriver.fill", tint: .yellow, text: item)
-                }
-                ForEach(r.exclusions, id: \.self) { item in
-                    ReadbackLine(symbol: "minus.circle.fill", tint: .secondary, text: item)
-                }
-                ForEach(r.specialNotes, id: \.self) { item in
-                    ReadbackLine(symbol: "text.bubble.fill", tint: .secondary, text: item)
+                // The natural summary — how a professional would say it back.
+                Text(ConversationSummary.sentence(for: r))
+                    .font(.title3.weight(.medium))
+                    .lineSpacing(4)
+
+                let details = ConversationSummary.details(for: r)
+                if !details.isEmpty {
+                    Divider()
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(details, id: \.self) { item in
+                            ReadbackLine(symbol: "text.bubble.fill", tint: .secondary, text: item)
+                        }
+                    }
                 }
             }
         }

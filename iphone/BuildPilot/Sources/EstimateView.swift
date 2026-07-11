@@ -82,22 +82,22 @@ struct EstimateView: View {
 
     // MARK: proposed result
 
+    private var bestBefore: VisitPhoto? { allPhotos.first { $0.kind == .before } }
+
     @ViewBuilder
     private var proposedResultCard: some View {
-        if let visualization, let image = PhotoStore.load(visualization, visitID: session.sessionId) {
-            Card(title: "Proposed Result") {
-                Button {
-                    if let index = allPhotos.firstIndex(where: { $0.id == visualization.id }) {
-                        viewerSelection = ViewerSelection(index: index)
-                    }
-                } label: {
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFit()
+        if let visualization, let vizImage = PhotoStore.load(visualization, visitID: session.sessionId) {
+            Card(title: "The Transformation") {
+                if let before = bestBefore,
+                   let beforeImage = PhotoStore.load(before, visitID: session.sessionId) {
+                    transformationImage(beforeImage, label: "TODAY", photo: before)
+                    Image(systemName: "arrow.down")
+                        .font(.title3.weight(.bold))
+                        .foregroundStyle(.yellow)
                         .frame(maxWidth: .infinity)
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .padding(.vertical, 2)
                 }
-                .buttonStyle(.plain)
+                transformationImage(vizImage, label: "PROPOSED", photo: visualization)
                 Text("AI visualization based on your room — final result may vary slightly.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -114,6 +114,32 @@ struct EstimateView: View {
                 .frame(maxWidth: .infinity, minHeight: 44)
             }
         }
+    }
+
+    private func transformationImage(_ image: UIImage, label: String, photo: VisitPhoto) -> some View {
+        Button {
+            if let index = allPhotos.firstIndex(where: { $0.id == photo.id }) {
+                viewerSelection = ViewerSelection(index: index)
+            }
+        } label: {
+            ZStack(alignment: .topLeading) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                Text(label)
+                    .font(.caption2.weight(.bold))
+                    .kerning(0.8)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 4)
+                    .background(label == "PROPOSED" ? Color.yellow : Color.black.opacity(0.55))
+                    .foregroundStyle(label == "PROPOSED" ? .black : .white)
+                    .clipShape(Capsule())
+                    .padding(8)
+            }
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: customer & photos
@@ -244,20 +270,29 @@ struct EstimateView: View {
     private var breakdownCard: some View {
         Card(title: "Estimate Breakdown") {
             if let e = session.estimate {
-                LabeledRow("Labour", detail: Format.hours(e.labourHours), value: Format.euro(e.labourCostEur))
-                LabeledRow("Materials", value: Format.euro(e.materialCostEur))
+                LabeledRow("Labour", detail: Format.hours(e.labourHours), value: Format.euro(e.labourCostEur), symbol: "person.2.fill")
+                Divider().padding(.leading, 32)
+                LabeledRow("Materials", value: Format.euro(e.materialCostEur), symbol: "shippingbox.fill")
+                Divider().padding(.leading, 32)
                 preparationRow
-                Divider().padding(.vertical, 4)
-                LabeledRow("Paint", value: Format.litres(e.paintQuantityLitres))
-                LabeledRow("Primer", value: Format.litres(e.primerQuantityLitres))
-                Divider().padding(.vertical, 4)
+                Divider().padding(.leading, 32)
+                LabeledRow("Paint", value: Format.litres(e.paintQuantityLitres), symbol: "paintbrush.fill")
+                Divider().padding(.leading, 32)
+                LabeledRow("Primer", value: Format.litres(e.primerQuantityLitres), symbol: "drop.fill")
+
                 HStack {
-                    Text("Total Estimate").font(.body.weight(.semibold))
+                    Text("Total Estimate").font(.headline)
                     Spacer()
                     Text(Format.euro(e.suggestedQuotationEur))
-                        .font(.body.weight(.bold).monospacedDigit())
-                        .foregroundStyle(.yellow)
+                        .font(.title3.weight(.bold).monospacedDigit())
+                        .foregroundStyle(.black)
                 }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .background(Color.yellow)
+                .foregroundStyle(.black)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .padding(.top, 8)
             }
         }
     }
@@ -265,9 +300,9 @@ struct EstimateView: View {
     @ViewBuilder
     private var preparationRow: some View {
         if let prep = session.requirements?.preparationRequired, !prep.isEmpty {
-            LabeledRow("Preparation", detail: prep.first, value: "Included")
+            LabeledRow("Preparation", detail: prep.first, value: "Included", symbol: "wrench.and.screwdriver.fill")
         } else {
-            LabeledRow("Preparation", detail: "standard surface prep", value: "Included")
+            LabeledRow("Preparation", detail: "standard surface prep", value: "Included", symbol: "wrench.and.screwdriver.fill")
         }
     }
 
@@ -424,26 +459,36 @@ private struct LabeledRow: View {
     let label: String
     let detail: String?
     let value: String
+    let symbol: String?
 
-    init(_ label: String, detail: String? = nil, value: String) {
+    init(_ label: String, detail: String? = nil, value: String, symbol: String? = nil) {
         self.label = label
         self.detail = detail
         self.value = value
+        self.symbol = symbol
     }
 
     var body: some View {
-        HStack {
+        HStack(spacing: 10) {
+            if let symbol {
+                Image(systemName: symbol)
+                    .font(.footnote)
+                    .foregroundStyle(.yellow)
+                    .frame(width: 22)
+                    .accessibilityHidden(true)
+            }
             Text(label)
             if let detail {
                 Text(detail)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
             Spacer()
             Text(value)
                 .font(.body.weight(.medium).monospacedDigit())
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 4)
         .accessibilityElement(children: .combine)
     }
 }
