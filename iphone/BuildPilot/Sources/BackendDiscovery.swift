@@ -125,7 +125,7 @@ final class BackendDiscovery: ObservableObject {
     }
 
     nonisolated private static func displayName(_ serviceName: String) -> String {
-        serviceName.replacingOccurrences(of: "Build Pilot on ", with: "")
+        serviceName.replacingOccurrences(of: "BuildMate on ", with: "")
     }
 
     nonisolated private static func url(host: NWEndpoint.Host, port: NWEndpoint.Port) -> URL? {

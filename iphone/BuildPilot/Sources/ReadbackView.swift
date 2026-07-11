@@ -36,19 +36,24 @@ struct ReadbackView: View {
     }
 
     private var header: some View {
-        Text("Today we've discussed")
-            .font(.system(.largeTitle, design: .rounded).bold())
-            .frame(maxWidth: .infinity, alignment: .leading)
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Here's what I understood from our conversation today")
+                .font(.system(.title, design: .rounded).bold())
+            Text("Please check I've captured everything correctly.")
+                .font(.body)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var discussedCard: some View {
         VStack(alignment: .leading, spacing: 14) {
             if let r = requirements {
                 ForEach(r.scopeOfWork, id: \.self) { item in
-                    ReadbackLine(symbol: "checkmark.circle.fill", tint: .green, text: item)
+                    ReadbackLine(symbol: "checkmark.circle.fill", tint: .yellow, text: item)
                 }
                 ForEach(r.preparationRequired, id: \.self) { item in
-                    ReadbackLine(symbol: "wrench.and.screwdriver.fill", tint: .green, text: item)
+                    ReadbackLine(symbol: "wrench.and.screwdriver.fill", tint: .yellow, text: item)
                 }
                 ForEach(r.exclusions, id: \.self) { item in
                     ReadbackLine(symbol: "minus.circle.fill", tint: .secondary, text: item)
@@ -68,10 +73,10 @@ struct ReadbackView: View {
     /// the painter must know before turning the phone around.
     private var noConversationCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label("The conversation wasn't captured", systemImage: "exclamationmark.triangle.fill")
+            Label("I couldn't capture our conversation", systemImage: "exclamationmark.triangle.fill")
                 .font(.body.weight(.semibold))
                 .foregroundStyle(.orange)
-            Text("The quote uses the standard scope — walls and ceiling, two coats. Confirm the details with your customer before showing the price.")
+            Text("This quote uses the standard scope — walls and ceiling, two coats. Please confirm the details together before showing the price.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
         }
@@ -93,10 +98,12 @@ struct ReadbackView: View {
         VStack(spacing: 10) {
             Button(action: onShowQuote) {
                 Label("Show the Quote", systemImage: "eurosign.circle.fill")
-                    .font(.title3.weight(.semibold))
-                    .frame(maxWidth: .infinity, minHeight: 56)
+                    .font(.title3.weight(.bold))
+                    .frame(maxWidth: .infinity, minHeight: 58)
             }
             .buttonStyle(.borderedProminent)
+            .tint(.yellow)
+            .foregroundStyle(.black)
 
             Button {
                 confirmRescan = true

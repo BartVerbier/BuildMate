@@ -179,7 +179,7 @@ def test_console_page_served(tmp_path):
     client, _ = make_client(tmp_path)
     response = client.get("/")
     assert response.status_code == 200
-    assert "Build Pilot" in response.text
+    assert "BuildMate" in response.text
     assert "Processing pipeline" in response.text
 
 

@@ -11,8 +11,6 @@ enum PhotoKind: String, Codable, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    /// Kinds the painter can capture manually.
-    static var cameraKinds: [PhotoKind] { [.before, .progress, .after] }
 
     var label: String {
         switch self {
@@ -40,7 +38,10 @@ enum PhotoStore {
 
     @discardableResult
     static func save(_ image: UIImage, visitID: String, kind: PhotoKind) -> VisitPhoto? {
-        guard let data = image.jpegData(compressionQuality: 0.85) else { return nil }
+        // Bake orientation into the pixels. EXIF-orientation JPEGs display
+        // fine locally but the image model returns renders in raw pixel
+        // orientation — normalizing here keeps every consumer consistent.
+        guard let data = image.normalizedUp().jpegData(compressionQuality: 0.85) else { return nil }
         let dir = directory(for: visitID)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let photo = VisitPhoto(
@@ -64,5 +65,18 @@ enum PhotoStore {
 
     static func jpegData(_ photo: VisitPhoto, visitID: String) -> Data? {
         try? Data(contentsOf: directory(for: visitID).appendingPathComponent(photo.fileName))
+    }
+}
+
+extension UIImage {
+    /// Returns the image with orientation physically applied to the pixels
+    /// (imageOrientation == .up). No-op when already upright.
+    func normalizedUp() -> UIImage {
+        guard imageOrientation != .up else { return self }
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        return UIGraphicsImageRenderer(size: size, format: format).image { _ in
+            draw(in: CGRect(origin: .zero, size: size))
+        }
     }
 }

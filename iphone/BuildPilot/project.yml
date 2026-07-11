@@ -12,11 +12,12 @@ targets:
     info:
       path: Info.plist
       properties:
-        UILaunchScreen: {}
-        CFBundleDisplayName: Build Pilot
-        NSCameraUsageDescription: Build Pilot scans the room with the camera and LiDAR to measure it.
-        NSMicrophoneUsageDescription: Build Pilot records the visit conversation to draft the estimate.
-        NSLocalNetworkUsageDescription: Build Pilot finds your Mac on the local network and sends the captured visit to it.
+        UILaunchScreen:
+          UIColorName: LaunchBackground
+        CFBundleDisplayName: BuildMate
+        NSCameraUsageDescription: BuildMate scans the room with the camera and LiDAR to measure it.
+        NSMicrophoneUsageDescription: BuildMate records the visit conversation to draft the estimate.
+        NSLocalNetworkUsageDescription: BuildMate finds your Mac on the local network and sends the captured visit to it.
         NSBonjourServices: [_buildpilot._tcp]
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true

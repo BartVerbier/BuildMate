@@ -13,6 +13,12 @@ struct EstimateView: View {
     @State private var quoteURL: URL?
     @State private var takingPhotoKind: PhotoKind?
     @State private var editingCustomer = false
+    @State private var viewerSelection: ViewerSelection?
+
+    struct ViewerSelection: Identifiable {
+        let id = UUID()
+        let index: Int
+    }
     @AppStorage("backendURL") private var backendURLString = ""
 
     private var record: VisitRecord? { history.record(for: session.sessionId) }
@@ -61,6 +67,9 @@ struct EstimateView: View {
             CameraPicker { image in addPhoto(image, kind: kind) }
                 .ignoresSafeArea()
         }
+        .fullScreenCover(item: $viewerSelection) { selection in
+            PhotoViewer(photos: allPhotos, visitID: session.sessionId, index: selection.index)
+        }
         .sheet(isPresented: $editingCustomer, onDismiss: renderQuote) {
             CustomerDetailsSheet(
                 name: record?.customerName ?? "",
@@ -77,11 +86,18 @@ struct EstimateView: View {
     private var proposedResultCard: some View {
         if let visualization, let image = PhotoStore.load(visualization, visitID: session.sessionId) {
             Card(title: "Proposed Result") {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: .infinity)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                Button {
+                    if let index = allPhotos.firstIndex(where: { $0.id == visualization.id }) {
+                        viewerSelection = ViewerSelection(index: index)
+                    }
+                } label: {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: .infinity)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+                .buttonStyle(.plain)
                 Text("AI visualization based on your room — final result may vary slightly.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -134,7 +150,14 @@ struct EstimateView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 10) {
                         ForEach(photos) { photo in
-                            PhotoThumbnail(photo: photo, visitID: session.sessionId)
+                            Button {
+                                if let index = allPhotos.firstIndex(where: { $0.id == photo.id }) {
+                                    viewerSelection = ViewerSelection(index: index)
+                                }
+                            } label: {
+                                PhotoThumbnail(photo: photo, visitID: session.sessionId)
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
                 }
@@ -192,35 +215,59 @@ struct EstimateView: View {
     // MARK: sections
 
     private var heroCard: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 8) {
+            if let customer = record?.customerName, !customer.isEmpty {
+                Text(customer)
+                    .font(.headline)
+            }
             Text(visitName)
-                .font(.subheadline)
+                .font(.footnote)
                 .foregroundStyle(.secondary)
             Text(Format.euroRounded(session.estimate?.suggestedQuotationEur ?? 0))
-                .font(.system(size: 56, weight: .bold, design: .rounded))
+                .font(.system(size: 58, weight: .heavy, design: .rounded))
                 .monospacedDigit()
-                .foregroundStyle(.green)
+                .foregroundStyle(.yellow)
                 .minimumScaleFactor(0.5)
                 .lineLimit(1)
-            Text("Suggested price · incl. VAT")
-                .font(.footnote)
+                .padding(.top, 2)
+            Text("Total Estimate · incl. VAT")
+                .font(.footnote.weight(.medium))
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 28)
+        .padding(.vertical, 30)
         .background(Color(.secondarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .accessibilityElement(children: .combine)
     }
 
     private var breakdownCard: some View {
-        Card(title: "Breakdown") {
+        Card(title: "Estimate Breakdown") {
             if let e = session.estimate {
                 LabeledRow("Labour", detail: Format.hours(e.labourHours), value: Format.euro(e.labourCostEur))
                 LabeledRow("Materials", value: Format.euro(e.materialCostEur))
+                preparationRow
+                Divider().padding(.vertical, 4)
                 LabeledRow("Paint", value: Format.litres(e.paintQuantityLitres))
                 LabeledRow("Primer", value: Format.litres(e.primerQuantityLitres))
+                Divider().padding(.vertical, 4)
+                HStack {
+                    Text("Total Estimate").font(.body.weight(.semibold))
+                    Spacer()
+                    Text(Format.euro(e.suggestedQuotationEur))
+                        .font(.body.weight(.bold).monospacedDigit())
+                        .foregroundStyle(.yellow)
+                }
             }
+        }
+    }
+
+    @ViewBuilder
+    private var preparationRow: some View {
+        if let prep = session.requirements?.preparationRequired, !prep.isEmpty {
+            LabeledRow("Preparation", detail: prep.first, value: "Included")
+        } else {
+            LabeledRow("Preparation", detail: "standard surface prep", value: "Included")
         }
     }
 
@@ -229,7 +276,12 @@ struct EstimateView: View {
             LabeledRow("Walls (net)", value: Format.squareMetres(m.netWallAreaM2))
             LabeledRow("Ceiling", value: Format.squareMetres(m.ceilingAreaM2))
             LabeledRow("Floor", value: Format.squareMetres(m.floorAreaM2))
-            LabeledRow("Scan confidence", value: "\(Int((m.confidenceScore * 100).rounded())) %")
+            LabeledRow("Measurements", value: m.confidenceScore >= 0.6 ? "Good" : "Check the room")
+            if m.notes.contains(where: { $0.contains("bounding box") }) {
+                Label("The floor wasn't fully captured — floor and ceiling areas are estimated. Point the camera at the floor during the next scan.", systemImage: "exclamationmark.triangle")
+                    .font(.footnote)
+                    .foregroundStyle(.orange)
+            }
         }
     }
 

@@ -66,13 +66,15 @@ struct VisitsHomeView: View {
 
     private var startButton: some View {
         Button {
-            Task { await visit.startVisit() }
+            visit.draftingNewVisit = true
         } label: {
             Label("Start New Visit", systemImage: "camera.metering.matrix")
-                .font(.title3.weight(.semibold))
-                .frame(maxWidth: .infinity, minHeight: 56)
+                .font(.title3.weight(.bold))
+                .frame(maxWidth: .infinity, minHeight: 58)
         }
         .buttonStyle(.borderedProminent)
+        .tint(.yellow)
+        .foregroundStyle(.black)
         .padding(.horizontal, 20)
         .padding(.top, 8)
         .padding(.bottom, 4)
@@ -86,7 +88,7 @@ private struct VisitRow: View {
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(.green)
+                .foregroundStyle(.yellow)
                 .font(.title3)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
@@ -100,7 +102,7 @@ private struct VisitRow: View {
             if let quote = record.session.estimate?.suggestedQuotationEur {
                 Text(Format.euroRounded(quote))
                     .font(.body.weight(.semibold).monospacedDigit())
-                    .foregroundStyle(.green)
+                    .foregroundStyle(.yellow)
             }
         }
         .padding(.vertical, 4)
@@ -251,7 +253,7 @@ struct SettingsSheet: View {
             ProgressView()
         } else if selectedMacID == mac.id, let ok = selectionOK {
             Image(systemName: ok ? "checkmark.circle.fill" : "xmark.circle.fill")
-                .foregroundStyle(ok ? .green : .red)
+                .foregroundStyle(ok ? Color.yellow : Color.red)
         }
     }
 
@@ -262,7 +264,7 @@ struct SettingsSheet: View {
         if selectionOK == false {
             return "Couldn't connect to that Mac. Check Build Pilot is running on it, then tap it again."
         }
-        return "Open Build Pilot on your Mac and it appears here automatically. Both devices must be on the same Wi-Fi. Tap your Mac to connect."
+        return "Open BuildMate on your Mac and it appears here automatically. Both devices must be on the same Wi-Fi. Tap your Mac to connect."
     }
 
     private func select(_ mac: BackendDiscovery.DiscoveredMac) async {

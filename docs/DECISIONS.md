@@ -209,6 +209,22 @@ The quote PDF is now a presentation: cover with price → Current Room
 visualization) → Scope of Work → Price Breakdown with VAT and Terms
 (→ Completed Result after the job).
 
+## Decision 24 — BuildMate rebrand and pre-scan customer capture (2026-07-11)
+
+Founder decision, superseding parts of Decisions 9-era branding and the
+zero-friction start flow:
+
+- The product's user-facing identity is **BuildMate**: black/yellow design
+  system, house + "M" icon, construction positioning. Internal identifiers
+  (bundle id `com.buildpilot.BuildPilot`, Bonjour type `_buildpilot._tcp`,
+  package `buildpilot`) intentionally keep the old name — changing them
+  breaks provisioning, permissions, and installs for zero user value.
+- Starting a visit now begins with a customer form: **Customer Name and
+  Property Address are required**; phone/email optional; a Painter trade
+  chip anticipates future trades (still V1 painters-only under the hood).
+- Quote PDFs carry a deterministic quote number (Q-YYYYMMDD-HEX from the
+  visit id), the property address, customer contact, and BuildMate footer.
+
 ## Rationale
 
 These decisions are intended to reduce complexity and increase the likelihood of building a working prototype quickly. The core value proposition is not the scanning technology itself, but the automation of the site visit and the generation of a useful draft estimate.

@@ -36,6 +36,8 @@ final class VisitController: ObservableObject {
     }
 
     @Published var phase: Phase = .idle
+    /// The pre-scan customer form is showing.
+    @Published var draftingNewVisit = false
     /// True once the painter has done the scope read-back with the customer
     /// and moved on to the price. Reset for every new visit.
     @Published var readbackConfirmed = false
@@ -49,11 +51,18 @@ final class VisitController: ObservableObject {
 
     private(set) var visitName = ""
     private(set) var scanStartedAt: Date?
+    private(set) var pendingCustomer: CustomerInfo?
     private var pendingBundle: (roomJSON: Data, audioFile: URL?)?
 
     var deviceSupported: Bool { RoomCaptureController.isSupported }
 
     // MARK: - visit lifecycle
+
+    func startVisit(customer: CustomerInfo) async {
+        pendingCustomer = customer
+        draftingNewVisit = false
+        await startVisit()
+    }
 
     func startVisit() async {
         guard deviceSupported else {
@@ -97,7 +106,7 @@ final class VisitController: ObservableObject {
             return
         }
 
-        visitName = Self.defaultVisitName()
+        visitName = Self.visitName(for: pendingCustomer)
         scanStartedAt = Date()
         pendingBundle = nil
         readbackConfirmed = false
@@ -180,13 +189,13 @@ final class VisitController: ObservableObject {
             visitLog.info("Upload + pipeline finished in \(Date().timeIntervalSince(uploadStarted), format: .fixed(precision: 1))s → \(session.status) (\(session.sessionId))")
             if session.status == "completed" {
                 pendingBundle = nil
-                history.add(name: visitName, session: session)
+                history.add(name: visitName, session: session, customer: pendingCustomer)
                 phase = .done(session)
                 finalizeVisitMedia(sessionID: session.sessionId, backendURL: url)
             } else {
                 pendingBundle = nil // the Mac rejected the scan; retrying won't help
                 phase = .failed(
-                    message: "Your Mac couldn't measure this scan. Walk the room again, keeping every wall in view.",
+                    message: Self.scanGuidance(from: session),
                     canRetry: false
                 )
             }
@@ -244,6 +253,19 @@ final class VisitController: ObservableObject {
         }
     }
 
+    /// Specific, actionable guidance derived from the backend's measurement
+    /// error — the painter should never have to guess what went wrong.
+    private static func scanGuidance(from session: SessionResponse) -> String {
+        let detail = session.rawMetadata?["error"] ?? ""
+        if detail.localizedCaseInsensitiveContains("no walls") {
+            return "The scan didn't capture any walls.\n\nWalk the room slowly and point the camera at each wall until it highlights on screen, then finish the visit."
+        }
+        if detail.localizedCaseInsensitiveContains("room scan") {
+            return "The room scan file couldn't be read. Scan the room again from the start."
+        }
+        return "The scan couldn't be measured. Walk the full room again — every wall, corner to corner — before finishing."
+    }
+
     private static func friendlyUploadError(_ error: Error) -> String {
         let base = "The visit is saved on this iPhone — nothing is lost."
         guard let urlError = error as? URLError else {
@@ -259,9 +281,13 @@ final class VisitController: ObservableObject {
         }
     }
 
-    private static func defaultVisitName() -> String {
+    private static func visitName(for customer: CustomerInfo?) -> String {
         let formatter = DateFormatter()
-        formatter.dateFormat = "d MMM, HH:mm"
-        return "Visit — \(formatter.string(from: Date()))"
+        formatter.dateFormat = "d MMM"
+        let date = formatter.string(from: Date())
+        if let name = customer?.name.trimmingCharacters(in: .whitespaces), !name.isEmpty {
+            return "\(name) · \(date)"
+        }
+        return "Visit · \(date)"
     }
 }

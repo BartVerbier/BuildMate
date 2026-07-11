@@ -85,7 +85,7 @@ private struct StepRow: View {
                 ProgressView()
             case .done:
                 Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
+                    .foregroundStyle(.yellow)
             }
         }
         .padding(.horizontal, 16)

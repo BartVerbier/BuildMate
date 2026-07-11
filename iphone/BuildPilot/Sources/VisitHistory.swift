@@ -13,6 +13,8 @@ struct VisitRecord: Codable, Identifiable {
     var photos: [VisitPhoto]?
     var customerName: String?
     var customerAddress: String?
+    var customerPhone: String?
+    var customerEmail: String?
 }
 
 @MainActor
@@ -28,8 +30,14 @@ final class VisitHistoryStore: ObservableObject {
         load()
     }
 
-    func add(name: String, session: SessionResponse) {
-        let record = VisitRecord(id: session.sessionId, name: name, date: Date(), session: session)
+    func add(name: String, session: SessionResponse, customer: CustomerInfo? = nil) {
+        var record = VisitRecord(id: session.sessionId, name: name, date: Date(), session: session)
+        if let customer {
+            record.customerName = customer.name.isEmpty ? nil : customer.name
+            record.customerAddress = customer.address.isEmpty ? nil : customer.address
+            record.customerPhone = customer.phone.isEmpty ? nil : customer.phone
+            record.customerEmail = customer.email.isEmpty ? nil : customer.email
+        }
         records.removeAll { $0.id == record.id }
         records.insert(record, at: 0)
         records = Array(records.prefix(Self.maxRecords))

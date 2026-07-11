@@ -7,8 +7,13 @@ struct ContentView: View {
 
     private var visitFlowPresented: Binding<Bool> {
         Binding(
-            get: { visit.phase.isActiveVisit },
-            set: { presented in if !presented { visit.reset() } }
+            get: { visit.draftingNewVisit || visit.phase.isActiveVisit },
+            set: { presented in
+                if !presented {
+                    visit.draftingNewVisit = false
+                    visit.reset()
+                }
+            }
         )
     }
 
@@ -19,12 +24,26 @@ struct ContentView: View {
         .fullScreenCover(isPresented: visitFlowPresented) {
             visitFlow
         }
-        .tint(.green)
+        .tint(.yellow)
         .preferredColorScheme(.dark)
     }
 
     @ViewBuilder
     private var visitFlow: some View {
+        if visit.draftingNewVisit {
+            NewVisitView(
+                onStart: { customer in Task { await visit.startVisit(customer: customer) } },
+                onCancel: { visit.draftingNewVisit = false }
+            )
+            .tint(.yellow)
+            .preferredColorScheme(.dark)
+        } else {
+            phaseFlow
+        }
+    }
+
+    @ViewBuilder
+    private var phaseFlow: some View {
         switch visit.phase {
         case .idle:
             EmptyView()
@@ -111,7 +130,7 @@ struct VisitFailedView: View {
                         .frame(maxWidth: .infinity, minHeight: 44)
                 }
                 .buttonStyle(.bordered)
-                .tint(onRetry != nil ? .red : .green)
+                .tint(onRetry != nil ? .red : .yellow)
             }
             .padding(.horizontal, 24)
             .padding(.bottom, 16)

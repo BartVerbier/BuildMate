@@ -139,6 +139,14 @@ private struct SummaryPage: View {
 
     private var estimate: EstimateDraft? { session.estimate }
 
+    /// Deterministic quote number derived from the visit id
+    /// (visit-YYYYMMDD-HHMMSS-hex → Q-YYYYMMDD-HEX).
+    private var quoteNumber: String {
+        let parts = session.sessionId.split(separator: "-")
+        guard parts.count >= 4 else { return "Q-\(session.sessionId.suffix(6).uppercased())" }
+        return "Q-\(parts[1])-\(parts[3].uppercased())"
+    }
+
     var body: some View {
         PageChrome {
             // Letterhead
@@ -177,6 +185,12 @@ private struct SummaryPage: View {
                 }
                 Spacer()
                 VStack(alignment: .trailing, spacing: 3) {
+                    Text(quoteNumber)
+                        .font(.system(size: 12, weight: .bold))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Color(red: 1.0, green: 0.78, blue: 0.05).opacity(0.25))
+                        .clipShape(RoundedRectangle(cornerRadius: 5))
                     Text(Date.now, format: .dateTime.day().month(.wide).year())
                     Text(Date.now, format: .dateTime.hour().minute())
                         .foregroundStyle(.secondary)
@@ -192,6 +206,11 @@ private struct SummaryPage: View {
                     Text(name).font(.system(size: 13, weight: .semibold))
                     if let address = record?.customerAddress, !address.isEmpty {
                         Text(address).font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
+                    let contact = [record?.customerPhone, record?.customerEmail]
+                        .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
+                    if !contact.isEmpty {
+                        Text(contact).font(.system(size: 10)).foregroundStyle(.secondary)
                     }
                 }
                 .padding(.bottom, 8)
@@ -224,10 +243,14 @@ private struct SummaryPage: View {
 
             Spacer(minLength: 0)
             Divide()
-            Text("Draft quotation — advisory and subject to final confirmation.")
-                .font(.system(size: 9))
-                .foregroundStyle(.secondary)
-                .padding(.top, 8)
+            HStack {
+                Text("Draft quotation — advisory and subject to final confirmation.")
+                Spacer()
+                Text("Prepared with BuildMate")
+            }
+            .font(.system(size: 9))
+            .foregroundStyle(.secondary)
+            .padding(.top, 8)
         }
     }
 
