@@ -44,7 +44,7 @@ struct HTTPBackendClient: BackendClient {
     }
 
     func submitVisit(roomScan: Data, audioFile: URL?, poses: Data? = nil) async throws -> SessionResponse {
-        var request = URLRequest(url: baseURL.appendingPathComponent("sessions"))
+        var request = authorizedRequest(url: baseURL.appendingPathComponent("sessions"))
         request.httpMethod = "POST"
         // Transcription on the backend can take a while for long visits; the
         // session persists server-side, so a timeout is recoverable.
@@ -90,7 +90,7 @@ struct HTTPBackendClient: BackendClient {
         guard let url = components?.url else {
             throw UploadError.badStatus(-1, "invalid visualize URL")
         }
-        var request = URLRequest(url: url)
+        var request = authorizedRequest(url: url)
         request.httpMethod = "POST"
         request.timeoutInterval = 120
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -104,7 +104,7 @@ struct HTTPBackendClient: BackendClient {
     /// into the quote, re-prices deterministically, re-renders, and returns
     /// the updated session with a change summary.
     func revise(sessionID: String, audioFile: URL) async throws -> RevisionResponse {
-        var request = URLRequest(url: baseURL.appendingPathComponent("sessions/\(sessionID)/revise"))
+        var request = authorizedRequest(url: baseURL.appendingPathComponent("sessions/\(sessionID)/revise"))
         request.httpMethod = "POST"
         request.timeoutInterval = 180
 
@@ -132,7 +132,7 @@ struct HTTPBackendClient: BackendClient {
     /// `t` is the capture time on the visit clock — it links the photo to a
     /// camera pose for reference-frame selection.
     func uploadPhoto(sessionID: String, kind: String, jpeg: Data, t: Double? = nil) async throws {
-        var request = URLRequest(url: baseURL.appendingPathComponent("sessions/\(sessionID)/photos"))
+        var request = authorizedRequest(url: baseURL.appendingPathComponent("sessions/\(sessionID)/photos"))
         request.httpMethod = "POST"
         request.timeoutInterval = 60
 
@@ -157,6 +157,20 @@ struct HTTPBackendClient: BackendClient {
         }
     }
 
+    /// Builds a request with the shared bearer token attached. Used by every
+    /// endpoint except /health (which is unauthenticated on the backend). The
+    /// token comes from the single source, BackendLocator.apiToken; when it is
+    /// empty (local dev) no header is added and the local backend accepts the
+    /// request as before.
+    private func authorizedRequest(url: URL) -> URLRequest {
+        var request = URLRequest(url: url)
+        let token = BackendLocator.apiToken
+        if !token.isEmpty {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        return request
+    }
+
     private func appendPart(_ body: inout Data, boundary: String, name: String,
                             fileName: String, contentType: String, data: Data) {
         body.append(Data("--\(boundary)\r\n".utf8))
@@ -178,7 +192,17 @@ struct HTTPBackendClient: BackendClient {
 ///    V1 local prototype, never part of the production path.
 enum BackendLocator {
     /// Set when the cloud backend ships, e.g. URL(string: "https://api.buildpilot.example").
-    static let productionURL: URL? = nil
+    static let productionURL = URL(string: "https://buildmate-production-4086.up.railway.app")
+
+    /// The shared bearer token for the protected backend — must match the
+    /// server's BUILDPILOT_API_TOKEN. This is the ONE place the token lives
+    /// in the whole app; paste it between the quotes below.
+    ///
+    /// Leave it empty for pure-local development: the local Mac backend runs
+    /// with authentication disabled and ignores the header, so localhost
+    /// keeps working either way. When non-empty it is sent on every request
+    /// except /health (see HTTPBackendClient.authorizedRequest).
+    static let apiToken = ""
 
     static func locate(configuredURLString: String) async -> URL? {
         if let productionURL {
