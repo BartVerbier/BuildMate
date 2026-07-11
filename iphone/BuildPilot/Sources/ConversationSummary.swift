@@ -5,31 +5,26 @@ import Foundation
 ///  painted sage green, while keeping the ceiling as it is."
 /// Deterministic templating — no AI involved.
 enum ConversationSummary {
+    /// Estimator voice: "We will repair the cracks above the window,
+    /// prepare the surfaces and paint the walls sage green, while leaving
+    /// the ceiling as it is."
     static func sentence(for requirements: RequirementExtraction) -> String {
-        var clauses: [String] = []
-
-        if !requirements.scopeOfWork.isEmpty {
-            clauses.append("you would like " + naturalList(requirements.scopeOfWork.map(lowercasedLead)))
-        }
-        if !requirements.exclusions.isEmpty {
-            clauses.append("keeping " + naturalList(requirements.exclusions.map(lowercasedLead)) + " as it is")
-        }
+        var actions: [String] = []
         if !requirements.preparationRequired.isEmpty {
-            clauses.append("we'll also take care of " + naturalList(requirements.preparationRequired.map(lowercasedLead)))
+            actions.append(naturalList(requirements.preparationRequired.map(lowercasedLead)))
+        }
+        actions.append("prepare the surfaces")
+        if !requirements.scopeOfWork.isEmpty {
+            actions.append(naturalList(requirements.scopeOfWork.map(lowercasedLead)))
+        } else {
+            actions.append("freshly paint the room")
         }
 
-        guard !clauses.isEmpty else {
-            return "From our conversation today I understand you'd like this room freshly painted."
+        var sentence = "We will " + naturalList(actions)
+        if !requirements.exclusions.isEmpty {
+            sentence += ", while leaving " + naturalList(requirements.exclusions.map(lowercasedLead)) + " as it is"
         }
-        var sentence = "From our conversation today I understand " + clauses[0]
-        if clauses.count > 1 {
-            sentence += ", while " + clauses[1]
-        }
-        sentence += "."
-        if clauses.count > 2 {
-            sentence += " " + clauses[2].prefix(1).uppercased() + clauses[2].dropFirst() + "."
-        }
-        return sentence
+        return sentence + "."
     }
 
     /// The remaining details worth listing under the sentence.

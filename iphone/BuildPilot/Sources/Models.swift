@@ -20,6 +20,14 @@ struct CompanyProfileInfo: Codable {
     let currency: String
 }
 
+/// Result of a customer revision: the updated session plus what changed.
+struct RevisionResponse: Codable {
+    let session: SessionResponse
+    let changes: [String]
+    let version: Int
+    let visualizationUpdated: Bool
+}
+
 struct RoomMeasurement: Codable {
     let grossWallAreaM2: Double
     let netWallAreaM2: Double

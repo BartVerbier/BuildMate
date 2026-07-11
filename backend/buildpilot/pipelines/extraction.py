@@ -50,6 +50,30 @@ class _LlmExtraction(BaseModel):
     paint_scope: PaintScope = Field(default_factory=PaintScope)
 
 
+class _LlmRevision(_LlmExtraction):
+    """Revision output: the fully-updated requirements plus a human-readable
+    list of exactly what changed."""
+
+    changes: List[str] = Field(default_factory=list)
+
+
+REVISION_PROMPT = """You are updating an existing painting-job requirements
+record after the customer requested changes.
+
+You receive the CURRENT requirements as JSON and a transcript of ONLY the
+requested changes. Produce the complete UPDATED requirements:
+
+- Apply exactly the changes the customer asked for — nothing more.
+- Keep every other item identical to the current requirements.
+- Follow the same extraction rules as the original (short phrases, only
+  what is actually said, paint_scope booleans reflect the updated intent).
+- Also return `changes`: short human-readable bullets describing each
+  applied change, e.g. "Ceiling painting added", "Wall colour changed to
+  white", "Wallpaper removal removed".
+- If the transcript contains no actionable change, return the current
+  requirements unchanged and an empty `changes` list."""
+
+
 class ExtractionError(RuntimeError):
     """Raised when extraction cannot run; orchestrator degrades gracefully."""
 
@@ -138,3 +162,59 @@ class ClaudeRequirementsExtractor:
             paint_scope=extracted.paint_scope,
             transcript_available=True,
         )
+
+    def revise(
+        self, current: RequirementExtraction, transcript: str
+    ) -> tuple[RequirementExtraction, list[str]]:
+        """Merges the customer's requested changes into the existing
+        requirements. Returns (updated requirements, human-readable changes).
+        Never rebuilds from scratch — the model is instructed to apply only
+        the requested changes."""
+        if not transcript.strip():
+            raise ExtractionError("empty revision transcript")
+        try:
+            import anthropic
+        except ImportError as exc:
+            raise ExtractionError("anthropic SDK is not installed") from exc
+
+        logger.info(
+            "Revision request: model=%s, transcript=%d chars", self.model, len(transcript)
+        )
+        started = time.perf_counter()
+        try:
+            client = anthropic.Anthropic()
+            response = client.messages.parse(
+                model=self.model,
+                max_tokens=4096,
+                system=REVISION_PROMPT,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": (
+                            "CURRENT requirements:\n"
+                            f"{current.model_dump_json(indent=2)}\n\n"
+                            f"Requested changes (transcript):\n{transcript}"
+                        ),
+                    }
+                ],
+                output_format=_LlmRevision,
+            )
+        except anthropic.APIError as exc:
+            raise ExtractionError(f"Anthropic API error: {exc}") from exc
+        except TypeError as exc:
+            raise ExtractionError("no Anthropic credentials configured") from exc
+
+        revision: _LlmRevision = response.parsed_output
+        logger.info(
+            "Revision response in %.1fs: %d changes: %s",
+            time.perf_counter() - started, len(revision.changes), revision.changes,
+        )
+        updated = RequirementExtraction(
+            scope_of_work=revision.scope_of_work,
+            exclusions=revision.exclusions,
+            preparation_required=revision.preparation_required,
+            special_notes=revision.special_notes,
+            paint_scope=revision.paint_scope,
+            transcript_available=True,
+        )
+        return updated, revision.changes

@@ -17,6 +17,7 @@ final class VisitController: ObservableObject {
     enum ProcessingStage: Int, Comparable {
         case finalizingScan
         case drafting // upload + Mac pipeline (one synchronous call)
+        case updatingQuote // customer revision being merged and re-priced
 
         static func < (lhs: Self, rhs: Self) -> Bool { lhs.rawValue < rhs.rawValue }
     }
@@ -25,6 +26,7 @@ final class VisitController: ObservableObject {
         case idle
         case connecting // preflight before scanning starts
         case scanning
+        case revising(SessionResponse) // recording the customer's change request
         case processing(ProcessingStage)
         case done(SessionResponse)
         case failed(message: String, canRetry: Bool)
@@ -43,6 +45,8 @@ final class VisitController: ObservableObject {
     @Published var readbackConfirmed = false
     /// True while the AI "proposed result" render is being generated.
     @Published var visualizationPending = false
+    /// What changed in the most recent revision, for the change-summary card.
+    @Published var lastChanges: [String] = []
     @AppStorage("backendURL") var backendURLString = ""
 
     let roomCapture = RoomCaptureController()
@@ -147,6 +151,54 @@ final class VisitController: ObservableObject {
         _ = audioRecorder.stop()
         scanStartedAt = nil
         phase = .idle
+    }
+
+    // MARK: - customer revision ("Make Changes")
+
+    /// The customer wants changes: return to listening mode.
+    func startRevision() async {
+        guard case .done(let session) = phase else { return }
+        guard await audioRecorder.requestPermission() else { return }
+        do {
+            try audioRecorder.start()
+            lastChanges = []
+            visitLog.info("Revision recording started")
+            phase = .revising(session)
+        } catch {
+            visitLog.error("Revision recording failed to start: \(error.localizedDescription)")
+        }
+    }
+
+    func cancelRevision(returnTo session: SessionResponse) {
+        _ = audioRecorder.stop()
+        phase = .done(session)
+    }
+
+    func finishRevision(for session: SessionResponse) async {
+        guard let audioFile = audioRecorder.stop() else {
+            phase = .done(session)
+            return
+        }
+        phase = .processing(.updatingQuote)
+        guard let url = await BackendLocator.locate(configuredURLString: backendURLString) else {
+            phase = .failed(message: "Your Mac couldn't be reached to update the quote. The original quote is unchanged.", canRetry: false)
+            return
+        }
+        do {
+            let result = try await HTTPBackendClient(baseURL: url)
+                .revise(sessionID: session.sessionId, audioFile: audioFile)
+            visitLog.info("Revision v\(result.version): \(result.changes.joined(separator: "; "))")
+            lastChanges = result.changes
+            history.add(name: visitName, session: result.session, customer: pendingCustomer)
+            readbackConfirmed = true // straight back to the quote
+            phase = .done(result.session)
+        } catch {
+            visitLog.error("Revision failed: \(error.localizedDescription)")
+            phase = .failed(
+                message: "The changes couldn't be applied — the original quote is unchanged. \(Self.friendlyUploadError(error))",
+                canRetry: false
+            )
+        }
     }
 
     /// Re-sends the captured bundle after a failed upload — the scan and

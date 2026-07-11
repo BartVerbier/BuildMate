@@ -8,12 +8,19 @@ struct EstimateView: View {
     let visitName: String
     @ObservedObject var history: VisitHistoryStore
     var visualizationPending: Bool = false
+    var changes: [String] = []
+    var onMakeChanges: (() -> Void)? = nil
     let onDone: (() -> Void)?
 
     @State private var quoteURL: URL?
     @State private var takingPhotoKind: PhotoKind?
     @State private var editingCustomer = false
     @State private var viewerSelection: ViewerSelection?
+    @State private var showShareOptions = false
+    @State private var showPreview = false
+    @State private var showMail = false
+    @State private var showSystemShare = false
+    @State private var accepted = false
 
     struct ViewerSelection: Identifiable {
         let id = UUID()
@@ -48,6 +55,7 @@ struct EstimateView: View {
     private var content: some View {
         ScrollView {
             VStack(spacing: 16) {
+                changesCard
                 heroCard
                 proposedResultCard
                 customerCard
@@ -76,6 +84,21 @@ struct EstimateView: View {
                 address: record?.customerAddress ?? ""
             ) { name, address in
                 history.setCustomer(name: name, address: address, for: session.sessionId)
+            }
+        }
+    }
+
+    // MARK: change summary (after a revision)
+
+    @ViewBuilder
+    private var changesCard: some View {
+        if !changes.isEmpty {
+            Card(title: "What Changed") {
+                ForEach(changes, id: \.self) { change in
+                    Label(change, systemImage: "checkmark")
+                        .font(.body.weight(.medium))
+                        .foregroundStyle(.yellow)
+                }
             }
         }
     }
@@ -322,17 +345,60 @@ struct EstimateView: View {
 
     @ViewBuilder
     private func requirementsCards(_ r: RequirementExtraction) -> some View {
-        if !r.scopeOfWork.isEmpty {
-            Card(title: "Scope of Work") { BulletList(items: r.scopeOfWork) }
+        Card(title: "Project Summary") {
+            Text(ConversationSummary.sentence(for: r))
+                .font(.body)
+                .lineSpacing(3)
+        }
+        Card(title: "Scope of Work") {
+            ForEach(WorkPlan.stages(for: r)) { stage in
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(stage.title.uppercased())
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.yellow)
+                        .kerning(0.8)
+                    BulletList(items: stage.items)
+                }
+                .padding(.bottom, 6)
+            }
+        }
+        if let e = session.estimate {
+            durationCard(e)
         }
         if !r.exclusions.isEmpty {
             Card(title: "Not Included") { BulletList(items: r.exclusions) }
         }
-        if !r.preparationRequired.isEmpty {
-            Card(title: "Preparation") { BulletList(items: r.preparationRequired) }
-        }
+        recommendationsCard(r)
         if !r.specialNotes.isEmpty {
             Card(title: "Customer Notes") { BulletList(items: r.specialNotes) }
+        }
+    }
+
+    private func durationCard(_ e: EstimateDraft) -> some View {
+        let duration = WorkPlan.duration(labourHours: e.labourHours)
+        return Card(title: "Project Duration") {
+            LabeledRow("Preparation", value: duration.preparation, symbol: "clock.fill")
+            LabeledRow("Painting", value: duration.painting, symbol: "paintbrush.fill")
+            LabeledRow("Drying", value: duration.drying, symbol: "wind")
+            Divider().padding(.vertical, 2)
+            LabeledRow("Total duration", value: duration.total, symbol: "calendar")
+        }
+    }
+
+    @ViewBuilder
+    private func recommendationsCard(_ r: RequirementExtraction) -> some View {
+        let suggestions = WorkPlan.recommendations(for: r)
+        if !suggestions.isEmpty {
+            Card(title: "Worth Considering") {
+                ForEach(suggestions, id: \.self) { item in
+                    Label(item, systemImage: "plus.circle")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                Text("Optional — not included in this quote.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
         }
     }
 
@@ -377,30 +443,82 @@ struct EstimateView: View {
     }
 
     private var shareBar: some View {
-        Group {
-            if let quoteURL {
-                ShareLink(item: quoteURL, preview: SharePreview(visitName)) {
-                    shareLabel
-                }
-            } else {
-                // PDF rendering failed — share a plain-text quote instead,
-                // so the painter is never blocked.
-                ShareLink(item: quoteText) {
-                    shareLabel
+        VStack(spacing: 10) {
+            if onMakeChanges != nil {
+                HStack(spacing: 10) {
+                    Button {
+                        withAnimation { accepted = true }
+                    } label: {
+                        Label(accepted ? "Accepted" : "Looks Great",
+                              systemImage: accepted ? "checkmark.circle.fill" : "hand.thumbsup.fill")
+                            .font(.body.weight(.semibold))
+                            .frame(maxWidth: .infinity, minHeight: 46)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.green)
+
+                    Button {
+                        onMakeChanges?()
+                    } label: {
+                        Label("Make Changes", systemImage: "mic.fill")
+                            .font(.body.weight(.semibold))
+                            .frame(maxWidth: .infinity, minHeight: 46)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.yellow)
                 }
             }
+            Button {
+                showShareOptions = true
+            } label: {
+                Label("Share Quote", systemImage: "square.and.arrow.up")
+                    .font(.title3.weight(.bold))
+                    .frame(maxWidth: .infinity, minHeight: 54)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.yellow)
+            .foregroundStyle(.black)
         }
-        .buttonStyle(.borderedProminent)
         .padding(.horizontal, 20)
         .padding(.top, 8)
         .padding(.bottom, 4)
         .background(.bar)
-    }
-
-    private var shareLabel: some View {
-        Label("Share Quote", systemImage: "square.and.arrow.up")
-            .font(.title3.weight(.semibold))
-            .frame(maxWidth: .infinity, minHeight: 56)
+        .confirmationDialog("Share Quote", isPresented: $showShareOptions, titleVisibility: .visible) {
+            if quoteURL != nil {
+                Button("Preview Quote") { showPreview = true }
+            }
+            if MailComposer.canSendMail {
+                Button("Email to Customer") { showMail = true }
+            }
+            Button("Share via…") { showSystemShare = true }
+            Button("Cancel", role: .cancel) {}
+        }
+        .sheet(isPresented: $showPreview) {
+            if let quoteURL {
+                QuotePreview(url: quoteURL).ignoresSafeArea()
+            }
+        }
+        .sheet(isPresented: $showMail) {
+            let identity = BusinessIdentity.load()
+            let email = MailComposer.quoteEmail(
+                customer: record?.customerName ?? visitName,
+                company: identity.companyName.isEmpty ? "Your painting team" : identity.companyName
+            )
+            MailComposer(
+                to: record?.customerEmail ?? "",
+                subject: email.subject,
+                body: email.body,
+                attachment: quoteURL
+            )
+            .ignoresSafeArea()
+        }
+        .sheet(isPresented: $showSystemShare) {
+            if let quoteURL {
+                ActivityShare(items: [quoteURL])
+            } else {
+                ActivityShare(items: [quoteText])
+            }
+        }
     }
 
     private var quoteText: String {
@@ -509,6 +627,17 @@ private struct BulletList: View {
             }
         }
     }
+}
+
+/// System share sheet for the "Share via…" fallback.
+private struct ActivityShare: UIViewControllerRepresentable {
+    let items: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 
 /// The visit flow presents EstimateView inside a fullScreenCover (no stack);

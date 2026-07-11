@@ -50,9 +50,16 @@ def build_instruction(requirements: RequirementExtraction) -> str:
         "STRICT RULES: This must remain recognisably the exact same room. "
         "Do not move, add, or remove furniture or objects. Do not change the "
         "room layout, windows, doors, or flooring unless explicitly requested. "
-        "Keep the camera angle and natural lighting identical. Photorealistic "
-        "only — no artistic reinterpretation. Change nothing except the "
-        "finishes listed above."
+        "Keep the camera angle and perspective identical. Change nothing "
+        "except the finishes listed above."
+    )
+    lines.append(
+        "QUALITY: The result should look professionally photographed — clean, "
+        "even, natural lighting consistent with the original photo; true, "
+        "freshly-painted colours; crisp edges along trim and corners. Show as "
+        "much of the painted walls as the original frame allows — never crop "
+        "walls tighter than the source image. Photorealistic only, no "
+        "artistic reinterpretation."
     )
     return "\n".join(lines)
 

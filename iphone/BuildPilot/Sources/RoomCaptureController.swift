@@ -87,17 +87,21 @@ final class RoomCaptureController: NSObject, ObservableObject {
               let frame = captureView.captureSession.arSession.currentFrame
         else { return }
 
-        // Levelness: pitch 0 = camera level (facing walls). Frames aimed at
-        // floor/ceiling score toward 0. Ties naturally prefer the frame with
-        // the most wall in view.
+        // Angle first (the customer-presentation priority): pitch 0 = camera
+        // level and wall-facing — the best proxy for "largest visible wall,
+        // straight on". Roll penalizes crooked horizons that make renders
+        // look amateur.
         let pitch = Double(frame.camera.eulerAngles.x)
-        let levelness = max(0, 1 - abs(pitch) / (.pi / 4))
+        let roll = Double(frame.camera.eulerAngles.z)
+        let pitchScore = max(0, 1 - abs(pitch) / (.pi / 4))
+        let rollScore = max(0, 1 - abs(roll) / (.pi / 8))
+        let levelness = pitchScore * rollScore
 
         let ciImage = CIImage(cvPixelBuffer: frame.capturedImage)
         guard let cgImage = Self.ciContext.createCGImage(ciImage, from: ciImage.extent) else { return }
         let (sharpness, exposure) = Self.imageQuality(cgImage)
 
-        let score = 0.45 * sharpness + 0.35 * levelness + 0.20 * exposure
+        let score = 0.45 * levelness + 0.35 * sharpness + 0.20 * exposure
         // Sensor frames are landscape; rotate to the portrait the painter saw.
         let image = UIImage(cgImage: cgImage, scale: 1, orientation: .right)
         guard let jpeg = image.jpegData(compressionQuality: 0.8) else { return }

@@ -8,32 +8,42 @@ import UIKit
 struct ProcessingView: View {
     let stage: VisitController.ProcessingStage
 
+    private var isRevision: Bool { stage == .updatingQuote }
+
     var body: some View {
         VStack(spacing: 0) {
             Spacer()
 
-            Text("Drafting Your Estimate")
+            Text(isRevision ? "Updating your quotation…" : "Drafting Your Estimate")
                 .font(.title2.bold())
                 .padding(.bottom, 28)
 
             VStack(spacing: 0) {
-                StepRow(
-                    title: "Room scan",
-                    symbol: "cube",
-                    state: stage >= .drafting ? .done : .active
-                )
-                Divider().padding(.leading, 52)
-                StepRow(
-                    title: "Audio recording",
-                    symbol: "waveform",
-                    state: .done
-                )
-                Divider().padding(.leading, 52)
-                StepRow(
-                    title: "Drafting estimate on your Mac",
-                    symbol: "desktopcomputer",
-                    state: stage >= .drafting ? .active : .pending
-                )
+                if isRevision {
+                    StepRow(title: "Change request captured", symbol: "waveform", state: .done)
+                    Divider().padding(.leading, 52)
+                    StepRow(title: "Merging changes and re-pricing", symbol: "arrow.triangle.2.circlepath", state: .active)
+                    Divider().padding(.leading, 52)
+                    StepRow(title: "Refreshing the visualization", symbol: "photo", state: .pending)
+                } else {
+                    StepRow(
+                        title: "Room scan",
+                        symbol: "cube",
+                        state: stage >= .drafting ? .done : .active
+                    )
+                    Divider().padding(.leading, 52)
+                    StepRow(
+                        title: "Audio recording",
+                        symbol: "waveform",
+                        state: .done
+                    )
+                    Divider().padding(.leading, 52)
+                    StepRow(
+                        title: "Drafting estimate on your Mac",
+                        symbol: "desktopcomputer",
+                        state: stage >= .drafting ? .active : .pending
+                    )
+                }
             }
             .background(Color(.secondarySystemGroupedBackground))
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))

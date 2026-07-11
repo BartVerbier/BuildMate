@@ -87,6 +87,33 @@ struct HTTPBackendClient: BackendClient {
         return data
     }
 
+    /// Sends the customer's spoken change request; the backend merges it
+    /// into the quote, re-prices deterministically, re-renders, and returns
+    /// the updated session with a change summary.
+    func revise(sessionID: String, audioFile: URL) async throws -> RevisionResponse {
+        var request = URLRequest(url: baseURL.appendingPathComponent("sessions/\(sessionID)/revise"))
+        request.httpMethod = "POST"
+        request.timeoutInterval = 180
+
+        let boundary = "buildpilot-\(UUID().uuidString)"
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        var body = Data()
+        if let audioData = try? Data(contentsOf: audioFile) {
+            appendPart(&body, boundary: boundary, name: "audio",
+                       fileName: "changes.m4a", contentType: "audio/mp4", data: audioData)
+        }
+        body.append(Data("--\(boundary)--\r\n".utf8))
+        request.httpBody = body
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+            throw UploadError.badStatus(http.statusCode, String(decoding: data, as: UTF8.self))
+        }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(RevisionResponse.self, from: data)
+    }
+
     /// Archives a visit photo to the backend's session directory (the
     /// permanent project record). Best-effort: the phone keeps its own copy.
     func uploadPhoto(sessionID: String, kind: String, jpeg: Data) async throws {

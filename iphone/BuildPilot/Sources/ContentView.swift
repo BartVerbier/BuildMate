@@ -51,6 +51,8 @@ struct ContentView: View {
             ConnectingView()
         case .scanning:
             CaptureVisitView(visit: visit)
+        case .revising(let session):
+            RevisionRecordingView(session: session, visit: visit)
         case .processing(let stage):
             ProcessingView(stage: stage)
         case .done(let session):
@@ -59,7 +61,9 @@ struct ContentView: View {
                     session: session,
                     visitName: visit.visitName,
                     history: visit.history,
-                    visualizationPending: visit.visualizationPending
+                    visualizationPending: visit.visualizationPending,
+                    changes: visit.lastChanges,
+                    onMakeChanges: { Task { await visit.startRevision() } }
                 ) {
                     visit.reset()
                 }

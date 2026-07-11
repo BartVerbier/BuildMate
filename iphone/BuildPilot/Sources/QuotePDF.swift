@@ -299,9 +299,29 @@ private struct DetailPage: View {
             }
 
             if let r = session.requirements {
-                if !r.scopeOfWork.isEmpty { bullets("Scope of Work", r.scopeOfWork) }
+                SectionTitle("Scope of Work")
+                ForEach(WorkPlan.stages(for: r)) { stage in
+                    Text(stage.title)
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .padding(.top, 3)
+                    ForEach(stage.items.prefix(5), id: \.self) { item in
+                        Text("•  \(item)").font(.system(size: 10.5)).padding(.vertical, 0.5)
+                    }
+                }
+                if let e = session.estimate {
+                    let duration = WorkPlan.duration(labourHours: e.labourHours)
+                    SectionTitle("Project Duration")
+                    Line("Painting", duration.painting)
+                    Line("Total duration", duration.total)
+                }
                 if !r.exclusions.isEmpty { bullets("Not Included", r.exclusions) }
-                if !r.preparationRequired.isEmpty { bullets("Preparation", r.preparationRequired) }
+                let suggestions = WorkPlan.recommendations(for: r)
+                if !suggestions.isEmpty {
+                    SectionTitle("Worth Considering (optional)")
+                    ForEach(suggestions, id: \.self) { item in
+                        Text("□  \(item)").font(.system(size: 10)).foregroundStyle(.secondary)
+                    }
+                }
                 if !r.specialNotes.isEmpty { bullets("Customer Notes", r.specialNotes) }
             }
 
