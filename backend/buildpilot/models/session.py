@@ -164,6 +164,13 @@ class CompanyProfile(BaseModel):
     travel_cost_eur: float = Field(ge=0)
     vat_rate: float = Field(ge=0)
     currency: str = "EUR"
+    # Additive pricing terms (Settings foundation). Every default is a no-op so
+    # quotes snapshotted before these existed remain byte-identical.
+    minimum_charge_eur: float = Field(default=0.0, ge=0)         # floor on the ex-VAT price
+    discount_rate: float = Field(default=0.0, ge=0)             # fraction off the subtotal
+    prep_material_allowance_eur: float = Field(default=0.0, ge=0)   # flat add to materials
+    consumables_allowance_eur: float = Field(default=0.0, ge=0)     # flat add to materials
+    misc_percentage: float = Field(default=0.0, ge=0)          # fraction of materials+labour
 
 
 class EstimateDraft(BaseModel):

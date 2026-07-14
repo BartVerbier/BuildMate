@@ -27,7 +27,7 @@ from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 
 from buildpilot.auth import auth_enabled, require_token
 from buildpilot.config import DEFAULT_COMPANY_PROFILE
-from buildpilot.models.session import PlanEdit
+from buildpilot.models.session import CompanyProfile, PlanEdit
 from buildpilot.pipeline import VisitPipeline
 from buildpilot.pipelines.estimator import DeterministicEstimator
 from buildpilot.pipelines.extraction import ClaudeRequirementsExtractor
@@ -117,6 +117,7 @@ def create_app(
         room_scan: UploadFile = File(...),
         audio: Optional[UploadFile] = File(None),
         poses: Optional[UploadFile] = File(None),
+        company_profile: Optional[str] = Form(None),
     ) -> dict:
         room_bytes = await room_scan.read()
         if len(room_bytes) > MAX_ROOM_SCAN_BYTES:
@@ -147,6 +148,15 @@ def create_app(
                     pass
 
         session = app.state.store.create_session(room_bytes, audio_bytes)
+        # The phone sends its contractor pricing so the estimate uses the
+        # contractor's settings; it's snapshotted on the session (immutable).
+        # A malformed profile falls back to the server default — never a failure.
+        if company_profile:
+            try:
+                session.company_profile = CompanyProfile.model_validate_json(company_profile)
+                app.state.store.save(session)
+            except Exception:
+                pass
         if poses_list is not None:
             app.state.store.write_artifact(
                 session, POSES_FILE, json.dumps(poses_list)

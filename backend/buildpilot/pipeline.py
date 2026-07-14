@@ -155,11 +155,13 @@ class VisitPipeline:
             ]
         store.save(session)
 
-        # 4. Deterministic estimation (never AI)
+        # 4. Deterministic estimation (never AI). Use the profile the phone sent
+        #    for this visit (snapshotted on the session), else the server default.
+        profile = session.company_profile or self.company_profile
         with self._timed(session, "estimate"):
-            session.company_profile = self.company_profile
+            session.company_profile = profile
             session.estimate = self.estimator.estimate(
-                session.measurements, session.requirements, self.company_profile
+                session.measurements, session.requirements, profile
             )
         session.status = SessionStatus.COMPLETED
         session.updated_at = datetime.now(timezone.utc)

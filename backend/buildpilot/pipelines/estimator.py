@@ -117,7 +117,15 @@ class DeterministicEstimator:
 
         paint_cost = money(Decimal(str(paint_litres)) * Decimal(str(p.paint_cost_eur_per_litre)))
         primer_cost = money(Decimal(str(primer_litres)) * Decimal(str(p.primer_cost_eur_per_litre)))
-        material_cost = money(paint_cost + primer_cost)
+        allowances = money(
+            Decimal(str(p.prep_material_allowance_eur)) + Decimal(str(p.consumables_allowance_eur))
+        )
+        material_cost = money(paint_cost + primer_cost + allowances)
+        if allowances > 0:
+            assumptions.append(
+                f"Materials allowance: prep {money(p.prep_material_allowance_eur)} + "
+                f"consumables {money(p.consumables_allowance_eur)} = {allowances}"
+            )
 
         # --- labour -----------------------------------------------------------
         # Painting passes: paint coats plus one primer coat, at the same
@@ -133,9 +141,29 @@ class DeterministicEstimator:
         labour_cost = money(Decimal(str(labour_hours)) * Decimal(str(p.labour_rate_eur_per_hour)))
 
         # --- quotation ----------------------------------------------------------
-        subtotal = money(material_cost + labour_cost + money(p.travel_cost_eur))
-        with_margin = money(subtotal * (1 + Decimal(str(p.profit_margin))))
-        quotation = money(with_margin * (1 + Decimal(str(p.vat_rate))))
+        # Miscellaneous (a fraction of materials + labour), then travel.
+        misc = money((material_cost + labour_cost) * Decimal(str(p.misc_percentage)))
+        if misc > 0:
+            assumptions.append(
+                f"Miscellaneous: {p.misc_percentage * 100:.0f}% of (materials + labour) = {misc}"
+            )
+        subtotal = money(material_cost + labour_cost + misc + money(p.travel_cost_eur))
+
+        # Optional discount off the subtotal.
+        discounted = money(subtotal * (1 - Decimal(str(p.discount_rate))))
+        if p.discount_rate > 0:
+            assumptions.append(
+                f"Discount: {p.discount_rate * 100:.0f}% off {subtotal} = {discounted}"
+            )
+
+        with_margin = money(discounted * (1 + Decimal(str(p.profit_margin))))
+
+        # Minimum charge: the ex-VAT price never falls below the floor.
+        priced = max(with_margin, money(p.minimum_charge_eur))
+        if p.minimum_charge_eur > 0 and priced > with_margin:
+            assumptions.append(f"Minimum charge applied: raised to {priced} ex-VAT")
+
+        quotation = money(priced * (1 + Decimal(str(p.vat_rate))))
         assumptions.append(
             f"Quotation: (materials {material_cost} + labour {labour_cost} + "
             f"travel {money(p.travel_cost_eur)}) x {1 + p.profit_margin:.2f} margin "
