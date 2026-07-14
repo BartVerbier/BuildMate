@@ -25,6 +25,15 @@ from buildpilot.models.session import RequirementExtraction
 DEFAULT_VISUALIZER_MODEL = "gemini-2.5-flash-image"
 DEVELOPER_API_ROOT = "https://generativelanguage.googleapis.com/v1beta"
 
+# gemini-2.5-flash-image on Vertex uses dynamic shared quota and intermittently
+# returns 429 under bursts — e.g. the Preparation render fired straight after
+# the Finished render lands in the same rate-limit window. Retry with
+# exponential backoff rides out that window (and the backoff spaces successive
+# stage calls, so Preparation no longer fails while Finished succeeds).
+_RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
+_VISUALIZE_MAX_ATTEMPTS = 4
+_VISUALIZE_BACKOFF_BASE_S = 3.0  # backoff 3s, 6s, 12s between attempts
+
 
 class VisualizationError(RuntimeError):
     """Raised when the render cannot run; callers degrade gracefully."""
@@ -225,32 +234,60 @@ class GeminiVisualizer:
                 }
             ]
         }
-        try:
-            # Credentials go in headers, never in the URL — URLs leak into
-            # exception messages and logs.
-            response = httpx.post(url, headers=headers, json=body, timeout=90)
-            response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            raise VisualizationError(
-                f"image model returned HTTP {exc.response.status_code}: "
-                f"{exc.response.text[:200]}"
-            ) from None
-        except httpx.HTTPError as exc:
-            raise VisualizationError(
-                f"image model request failed: {type(exc).__name__}"
-            ) from None
+        last_reason = "image model returned no image"
+        for attempt in range(1, _VISUALIZE_MAX_ATTEMPTS + 1):
+            response = None
+            try:
+                # Credentials go in headers, never in the URL — URLs leak into
+                # exception messages and logs.
+                response = httpx.post(url, headers=headers, json=body, timeout=90)
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                status = exc.response.status_code
+                last_reason = (
+                    f"image model returned HTTP {status}: {exc.response.text[:200]}"
+                )
+                # A non-retryable status (e.g. 400/401/403) fails immediately.
+                if status not in _RETRYABLE_STATUS:
+                    raise VisualizationError(last_reason) from None
+                response = None
+            except httpx.HTTPError as exc:
+                last_reason = f"image model request failed: {type(exc).__name__}"
+                response = None
 
-        try:
-            for candidate in response.json().get("candidates", []):
-                for part in candidate.get("content", {}).get("parts", []):
-                    inline = part.get("inline_data") or part.get("inlineData")
-                    if inline and inline.get("data"):
-                        image = base64.b64decode(inline["data"])
-                        logger.info(
-                            "Visualization response in %.1fs: %d kB image",
-                            time.perf_counter() - started, len(image) // 1024,
-                        )
-                        return image
-        except (ValueError, KeyError, TypeError) as exc:
-            raise VisualizationError(f"unexpected image model response: {exc}") from exc
-        raise VisualizationError("image model returned no image")
+            if response is not None:
+                try:
+                    image = self._decode_image(response)
+                except (ValueError, KeyError, TypeError) as exc:
+                    raise VisualizationError(
+                        f"unexpected image model response: {exc}"
+                    ) from exc
+                if image is not None:
+                    logger.info(
+                        "Visualization response in %.1fs: %d kB image (attempt %d)",
+                        time.perf_counter() - started, len(image) // 1024, attempt,
+                    )
+                    return image
+                # 200 with no image part — transient; worth another attempt.
+                last_reason = "image model returned no image"
+
+            if attempt < _VISUALIZE_MAX_ATTEMPTS:
+                backoff = _VISUALIZE_BACKOFF_BASE_S * (2 ** (attempt - 1))
+                logger.warning(
+                    "Visualization %s attempt %d/%d failed (%s) — retrying in %.0fs",
+                    stage, attempt, _VISUALIZE_MAX_ATTEMPTS, last_reason, backoff,
+                )
+                time.sleep(backoff)
+
+        raise VisualizationError(last_reason)
+
+    @staticmethod
+    def _decode_image(response) -> "bytes | None":
+        """Returns the JPEG bytes from the model response, or None if the
+        response carried no inline image part."""
+        for candidate in response.json().get("candidates", []):
+            for part in candidate.get("content", {}).get("parts", []):
+                inline = part.get("inline_data") or part.get("inlineData")
+                if inline and inline.get("data"):
+                    return base64.b64decode(inline["data"])
+        return None
