@@ -164,9 +164,10 @@ def test_instruction_is_deterministic_and_faithful():
     assert "Repair the crack above the window" in a
     assert "same room" in a
     assert "furniture" in a
-    # Whole-wall framing rules (Sprint 6): never crop tighter than source.
-    assert "full field of view" in a
-    assert "architectural photography" in a
+    # In-place edit rules: preserve the exact source framing, do not reinvent.
+    assert "in-place edit" in a.lower()
+    assert "framing" in a.lower()
+    assert "different room" in a.lower()
 
 
 def test_preparation_instruction_is_deterministic():
@@ -175,7 +176,7 @@ def test_preparation_instruction_is_deterministic():
     assert a == build_instruction(requirements, "preparation")
     assert "dust sheets" in a
     assert "no new paint" in a.lower()
-    assert "full field of view" in a
+    assert "in-place edit" in a.lower()
     # Prep view is scope-independent: the room is protected, not painted.
     assert "Paint the walls" not in a
 
