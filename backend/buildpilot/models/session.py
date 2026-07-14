@@ -112,6 +112,37 @@ class RequirementExtraction(BaseModel):
     transcript_available: bool = True
 
 
+class WallEdit(BaseModel):
+    """A manual correction to one wall. Only the provided dimensions change;
+    gross/net areas are re-derived deterministically by the backend."""
+
+    wall_id: str
+    width_m: Optional[float] = Field(default=None, ge=0)
+    height_m: Optional[float] = Field(default=None, ge=0)
+    opening_area_m2: Optional[float] = Field(default=None, ge=0)
+
+
+class PlanEdit(BaseModel):
+    """Structured manual edits to a plan (Manual Measurement Editing). Every
+    field is optional — only what the painter changed is sent. The backend
+    re-derives areas and re-runs the SAME deterministic estimator; no formula
+    changes. `measurements_verified` records that a human checked the numbers,
+    which clears the incomplete-scan warnings."""
+
+    walls: Optional[List[WallEdit]] = None
+    ceiling_area_m2: Optional[float] = Field(default=None, ge=0)
+    door_area_m2: Optional[float] = Field(default=None, ge=0)
+    window_area_m2: Optional[float] = Field(default=None, ge=0)
+    paint_scope: Optional[PaintScope] = None
+    painted_wall_ids: Optional[List[str]] = None
+    coats: Optional[int] = Field(default=None, ge=1)
+    scope_of_work: Optional[List[str]] = None
+    exclusions: Optional[List[str]] = None
+    preparation_required: Optional[List[str]] = None
+    special_notes: Optional[List[str]] = None
+    measurements_verified: bool = False
+
+
 class CompanyProfile(BaseModel):
     """Pricing assumptions supplied to the estimator. Hard-coded defaults in V1."""
 

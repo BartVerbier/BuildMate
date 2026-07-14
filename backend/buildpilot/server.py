@@ -27,6 +27,7 @@ from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 
 from buildpilot.auth import auth_enabled, require_token
 from buildpilot.config import DEFAULT_COMPANY_PROFILE
+from buildpilot.models.session import PlanEdit
 from buildpilot.pipeline import VisitPipeline
 from buildpilot.pipelines.estimator import DeterministicEstimator
 from buildpilot.pipelines.extraction import ClaudeRequirementsExtractor
@@ -279,6 +280,65 @@ def create_app(
         photos_dir = session_dir / "photos"
         before_photos = sorted(photos_dir.glob("before-*.jpg")) if photos_dir.exists() else []
 
+        return {
+            "session": session.model_dump(mode="json"),
+            "changes": changes,
+            "version": version + 1,
+            "render_required": bool(before_photos),
+        }
+
+    @app.post("/sessions/{session_id}/reestimate")
+    def reestimate(session_id: str, edit: PlanEdit) -> dict:
+        """Manual plan edit (Manual Measurement Editing): apply structured
+        changes (wall dimensions, openings, ceiling area, scope, coats), re-derive
+        areas, and re-run the SAME deterministic estimator. The previous state is
+        kept as a numbered version and reversible; deterministic price deltas are
+        returned so the phone can show what changed. No estimator formula changes,
+        no AI. `render_required` tells the phone the visualization/PDF are stale."""
+        from datetime import datetime, timezone
+
+        from buildpilot.pipelines.editing import apply_plan_edit
+
+        session = _load_or_404(session_id)
+        if (
+            session.measurements is None
+            or session.requirements is None
+            or session.estimate is None
+        ):
+            raise HTTPException(409, "Session has no completed plan to edit")
+
+        store: SessionStore = app.state.store
+        session_dir = store.session_dir(session.session_id)
+
+        # Version the current state first, so an edit is reversible.
+        versions_dir = session_dir / "versions"
+        versions_dir.mkdir(exist_ok=True)
+        version = len(list(versions_dir.glob("v*.json"))) + 1
+        (versions_dir / f"v{version:02d}.json").write_text(session.model_dump_json(indent=2))
+
+        profile = session.company_profile or app.state.pipeline.company_profile
+        measurements, requirements, profile = apply_plan_edit(
+            session.measurements, session.requirements, profile, edit
+        )
+
+        old = session.estimate
+        session.measurements = measurements
+        session.requirements = requirements
+        session.company_profile = profile
+        session.estimate = app.state.pipeline.estimator.estimate(
+            measurements, requirements, profile
+        )
+        changes = _estimate_deltas(old, session.estimate)
+        session.raw_metadata["version"] = str(version + 1)
+        session.raw_metadata["plan_edited"] = "true"
+        session.updated_at = datetime.now(timezone.utc)
+        store.save(session)
+        store.write_artifact(
+            session, "estimate.json", session.estimate.model_dump_json(indent=2)
+        )
+
+        photos_dir = session_dir / "photos"
+        before_photos = sorted(photos_dir.glob("before-*.jpg")) if photos_dir.exists() else []
         return {
             "session": session.model_dump(mode="json"),
             "changes": changes,
