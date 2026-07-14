@@ -45,18 +45,40 @@ final class VisitController: ObservableObject {
     @Published var readbackConfirmed = false
     /// True while the AI "proposed result" render is being generated.
     @Published var visualizationPending = false
+    /// Set when the "proposed result" render couldn't be created; the estimate
+    /// screen shows it with a Retry action instead of a spinner that silently
+    /// vanishes. Nil when a render is pending or succeeded.
+    @Published var renderError: String?
     /// What changed in the most recent revision, for the change-summary card.
     @Published var lastChanges: [String] = []
     @AppStorage("backendURL") var backendURLString = ""
 
     let roomCapture = RoomCaptureController()
     let history = VisitHistoryStore()
+    /// The contractor's editable defaults — the pricing every new visit is
+    /// built from, and the identity frozen onto each quote.
+    let settings = ContractorSettingsStore()
     private let audioRecorder = AudioRecorder()
 
     private(set) var visitName = ""
     private(set) var scanStartedAt: Date?
     private(set) var pendingCustomer: CustomerInfo?
     private var pendingBundle: (roomJSON: Data, audioFile: URL?, poses: Data?)?
+    /// The last render target, so a failed visualization can be retried.
+    private var lastRenderTarget: (sessionID: String, backendURL: URL)?
+
+    // Geometry-only rescan (Option B): recapture the room while keeping the
+    // original conversation. The current quote is preserved and restored on
+    // cancel; on success the new estimate replaces it in place.
+    /// True while a rescan is in progress (drives the capture screen indicator).
+    @Published private(set) var isRescanning = false
+    /// The audio from the last completed capture, reused by a rescan so the
+    /// painter never loses the conversation (unique temp file, not overwritten).
+    private var lastAudioFile: URL?
+    private var rescanReuseAudio = false
+    private var rescanReturnSession: SessionResponse?
+    /// The capture screen tells the painter the conversation is being kept.
+    var rescanKeepsConversation: Bool { isRescanning && rescanReuseAudio }
 
     var deviceSupported: Bool { RoomCaptureController.isSupported }
 
@@ -125,15 +147,24 @@ final class VisitController: ObservableObject {
     func finishVisit() {
         guard case .scanning = phase else { return }
         phase = .processing(.finalizingScan)
-        let audioFile = audioRecorder.stop()
+        let rescan = isRescanning
+        let audioFile: URL?
+        if rescan && rescanReuseAudio {
+            audioFile = lastAudioFile // reuse the original conversation verbatim
+        } else {
+            audioFile = audioRecorder.stop()
+            if let audioFile { lastAudioFile = audioFile }
+        }
 
         roomCapture.onFinalResult = { [weak self] result in
             Task { @MainActor in
                 guard let self else { return }
                 switch result {
                 case .success(let roomJSON):
-                    let poses = self.roomCapture.posesJSON()
-                    visitLog.info("Scan finalized: \(roomJSON.count) bytes room JSON, audio: \(audioFile != nil), poses: \(poses?.count ?? 0) bytes")
+                    // Skip poses on a rescan — new poses can't align with the
+                    // reused audio's timeline, so gaze would mis-resolve.
+                    let poses = rescan ? nil : self.roomCapture.posesJSON()
+                    visitLog.info("Scan finalized: \(roomJSON.count) bytes room JSON, audio: \(audioFile != nil), poses: \(poses?.count ?? 0) bytes, rescan: \(rescan)")
                     self.pendingBundle = (roomJSON, audioFile, poses)
                     await self.uploadPendingBundle()
                 case .failure(let error):
@@ -148,10 +179,53 @@ final class VisitController: ObservableObject {
         roomCapture.stop()
     }
 
-    /// Abandons the visit: discards audio and scan, returns home.
+    /// Re-capture the room geometry for the current visit, keeping the original
+    /// conversation and requirements. The existing quote is preserved and shown
+    /// again if the rescan is cancelled; on success the new estimate replaces it.
+    func rescan() async {
+        guard case .done(let current) = phase, deviceSupported else { return }
+        phase = .connecting
+        guard let backendURL = await locateAndRememberBackend(),
+              await HTTPBackendClient(baseURL: backendURL).isReachable() else {
+            visitLog.error("Rescan aborted: backend unreachable — keeping current quote")
+            phase = .done(current) // never lose the existing quote
+            return
+        }
+
+        // Reuse the original audio (and therefore the conversation) when we
+        // still have it; only record fresh if the visit never had audio.
+        let haveAudio = lastAudioFile.map { FileManager.default.fileExists(atPath: $0.path) } ?? false
+        rescanReuseAudio = haveAudio
+        if !haveAudio {
+            guard await audioRecorder.requestPermission() else { phase = .done(current); return }
+            do { try audioRecorder.start() } catch { phase = .done(current); return }
+        }
+
+        rescanReturnSession = current
+        isRescanning = true
+        scanStartedAt = Date()
+        pendingBundle = nil
+        roomCapture.start(clockReference: Date())
+        visitLog.info("Rescan started (reuse audio: \(haveAudio))")
+        phase = .scanning
+    }
+
+    /// Abandons the current scan. A rescan returns to the existing quote
+    /// (nothing is lost); a first scan discards audio and returns home.
     func cancelVisit() {
         roomCapture.onFinalResult = nil
         roomCapture.stop()
+        if isRescanning {
+            if !rescanReuseAudio { _ = audioRecorder.stop() }
+            let ret = rescanReturnSession
+            isRescanning = false
+            rescanReuseAudio = false
+            rescanReturnSession = nil
+            scanStartedAt = nil
+            readbackConfirmed = true
+            phase = ret.map { .done($0) } ?? .idle
+            return
+        }
         _ = audioRecorder.stop()
         scanStartedAt = nil
         phase = .idle
@@ -217,8 +291,52 @@ final class VisitController: ObservableObject {
         await uploadPendingBundle()
     }
 
+    /// Applies manual plan edits (Edit Plan) to the current visit in place: a
+    /// deterministic backend re-estimate, history updated under the SAME id
+    /// (no duplicate), outputs flagged stale for explicit regeneration. A nil
+    /// payload (cancel / no changes) is a no-op.
+    func savePlanEdit(payload: PlanEditPayload?, pdfStale: Bool, visualizationStale: Bool) async {
+        guard case .done(let current) = phase, let payload else { return }
+        guard let url = await BackendLocator.locate(configuredURLString: backendURLString) else { return }
+        do {
+            let result = try await HTTPBackendClient(baseURL: url)
+                .reestimate(sessionID: current.sessionId, edit: payload)
+            history.add(name: visitName, session: result.session, customer: pendingCustomer)
+            history.markStale(pdf: pdfStale, visualization: visualizationStale, for: current.sessionId)
+            lastChanges = result.changes
+            readbackConfirmed = true
+            phase = .done(result.session) // refresh the estimate with the new numbers
+            visitLog.info("Plan edited: \(result.changes.joined(separator: "; "))")
+        } catch {
+            visitLog.error("Plan edit failed (quote unchanged): \(error.localizedDescription)")
+        }
+    }
+
+    /// Edits a reopened historical visit in place: a deterministic re-estimate on
+    /// the SAME session_id, saved under the SAME history entry (customer, photos,
+    /// confirmation state and version history all preserved — no new visit).
+    /// No phase change: the reopened screen refreshes because EstimateView reads
+    /// the session from history.
+    func editHistoricalPlan(record: VisitRecord, payload: PlanEditPayload?, pdfStale: Bool, visualizationStale: Bool) async {
+        guard let payload else { return }
+        guard let url = await BackendLocator.locate(configuredURLString: backendURLString) else { return }
+        do {
+            let result = try await HTTPBackendClient(baseURL: url)
+                .reestimate(sessionID: record.id, edit: payload)
+            // customer nil → carries the existing record's customer/photos/state.
+            history.add(name: record.name, session: result.session)
+            history.markStale(pdf: pdfStale, visualization: visualizationStale, for: record.id)
+            visitLog.info("Historical plan edited (\(record.id))")
+        } catch {
+            visitLog.error("Historical plan edit failed (unchanged): \(error.localizedDescription)")
+        }
+    }
+
     func reset() {
         scanStartedAt = nil
+        isRescanning = false
+        rescanReuseAudio = false
+        rescanReturnSession = nil
         phase = .idle
     }
 
@@ -246,15 +364,30 @@ final class VisitController: ObservableObject {
         let uploadStarted = Date()
         do {
             let session = try await HTTPBackendClient(baseURL: url)
-                .submitVisit(roomScan: bundle.roomJSON, audioFile: bundle.audioFile, poses: bundle.poses)
+                .submitVisit(roomScan: bundle.roomJSON, audioFile: bundle.audioFile, poses: bundle.poses,
+                             companyProfile: settings.settings.companyProfile())
             visitLog.info("Upload + pipeline finished in \(Date().timeIntervalSince(uploadStarted), format: .fixed(precision: 1))s → \(session.status) (\(session.sessionId))")
             if session.status == "completed" {
                 pendingBundle = nil
-                history.add(name: visitName, session: session, customer: pendingCustomer)
+                if isRescanning {
+                    // Replace the current visit in place; the conversation is
+                    // unchanged, so go straight to the updated quote.
+                    if let old = rescanReturnSession { history.remove(id: old.sessionId) }
+                    isRescanning = false
+                    rescanReuseAudio = false
+                    rescanReturnSession = nil
+                    readbackConfirmed = true
+                }
+                // Freeze the business identity onto this new visit at creation.
+                let snapshot = BusinessSnapshot.capture(from: settings.settings, visitID: session.sessionId)
+                history.add(name: visitName, session: session, customer: pendingCustomer, business: snapshot)
                 phase = .done(session)
                 finalizeVisitMedia(sessionID: session.sessionId, backendURL: url)
             } else {
                 pendingBundle = nil // the Mac rejected the scan; retrying won't help
+                isRescanning = false
+                rescanReuseAudio = false
+                rescanReturnSession = nil
                 phase = .failed(
                     message: Self.scanGuidance(from: session),
                     canRetry: false
@@ -309,6 +442,8 @@ final class VisitController: ObservableObject {
     /// them as visit photos. Best-effort: the estimate is never delayed and
     /// a failed render simply leaves the previous images in place.
     private func requestRenders(sessionID: String, backendURL: URL) {
+        lastRenderTarget = (sessionID, backendURL)
+        renderError = nil
         visualizationPending = true
         Task { [weak self] in
             let client = HTTPBackendClient(baseURL: backendURL)
@@ -317,22 +452,75 @@ final class VisitController: ObservableObject {
                 ("preparation", .preparation),
             ]
             for (stage, kind) in stages {
-                do {
-                    let jpeg = try await client.requestVisualization(sessionID: sessionID, stage: stage)
-                    guard let self else { return }
-                    if let image = UIImage(data: jpeg),
-                       let photo = PhotoStore.save(image, visitID: sessionID, kind: kind) {
-                        self.history.addPhoto(photo, to: sessionID)
-                        visitLog.info("Render saved: \(stage) (\(jpeg.count / 1024) kB)")
+                // The hosted image model can transiently 503 (cold start /
+                // rate limit) or time out — the biggest cause of the After
+                // appearing "inconsistently". Retry the hero render on a
+                // transient failure before giving up. Deterministic gates
+                // (409: no Before, or no conversation) are NOT retried.
+                let maxAttempts = stage == "finished" ? 3 : 1
+                var lastError: Error?
+                for attempt in 1 ... maxAttempts {
+                    do {
+                        let jpeg = try await client.requestVisualization(sessionID: sessionID, stage: stage)
+                        guard let self else { return }
+                        lastError = nil
+                        if let image = UIImage(data: jpeg),
+                           let photo = PhotoStore.save(image, visitID: sessionID, kind: kind) {
+                            self.history.addPhoto(photo, to: sessionID)
+                            visitLog.info("Render saved: \(stage) (\(jpeg.count / 1024) kB, attempt \(attempt))")
+                        } else {
+                            visitLog.error("Render \(stage): received \(jpeg.count) bytes but could not decode/save image")
+                        }
+                        break
+                    } catch {
+                        lastError = error
+                        visitLog.warning("Render \(stage) attempt \(attempt)/\(maxAttempts) failed — \(Self.renderErrorDetail(error))")
+                        if attempt < maxAttempts, Self.isTransientRenderError(error) {
+                            try? await Task.sleep(for: .seconds(3))
+                            continue
+                        }
+                        break
                     }
-                } catch {
-                    visitLog.warning("Render \(stage) unavailable: \(error.localizedDescription)")
                 }
-                // The hero image is done (or failed) — stop the spinner; the
-                // preparation view arrives quietly when ready.
-                if stage == "finished" { self?.visualizationPending = false }
+                // The hero image is done (or exhausted retries) — stop the
+                // spinner and surface any final failure; the preparation view
+                // arrives quietly when ready.
+                if stage == "finished" {
+                    self?.renderError = lastError.map { Self.friendlyRenderError($0) }
+                    self?.visualizationPending = false
+                }
             }
         }
+    }
+
+    /// Transient render failures worth retrying: a 5xx from the image model
+    /// (503 cold start / rate limit) or a dropped/timed-out connection. A 409
+    /// (deterministic precondition) is never transient.
+    private static func isTransientRenderError(_ error: Error) -> Bool {
+        if let uploadError = error as? HTTPBackendClient.UploadError,
+           case let .badStatus(code, _) = uploadError {
+            return (500 ... 599).contains(code)
+        }
+        if let urlError = error as? URLError {
+            return [.timedOut, .networkConnectionLost, .cannotConnectToHost].contains(urlError.code)
+        }
+        return false
+    }
+
+    /// Precise diagnostic string for the logs — the exact HTTP status/body so
+    /// the failing gate (401 / 409 / 503 …) is never a guess.
+    private static func renderErrorDetail(_ error: Error) -> String {
+        if let uploadError = error as? HTTPBackendClient.UploadError,
+           case let .badStatus(code, body) = uploadError {
+            return "HTTP \(code): \(body.prefix(160))"
+        }
+        return error.localizedDescription
+    }
+
+    /// Re-requests the AI renders after a failure (from the estimate screen).
+    func retryRenders() {
+        guard let target = lastRenderTarget else { return }
+        requestRenders(sessionID: target.sessionID, backendURL: target.backendURL)
     }
 
     /// Specific, actionable guidance derived from the backend's measurement
@@ -350,6 +538,20 @@ final class VisitController: ObservableObject {
 
     private static func friendlyUploadError(_ error: Error) -> String {
         let base = "The visit is saved on this iPhone — nothing is lost."
+        // A server that answered with an HTTP error tells us more than a
+        // transport failure — distinguish "not authorized" and "server fault"
+        // from "couldn't reach it", so the painter knows whether retrying helps.
+        if let uploadError = error as? HTTPBackendClient.UploadError,
+           case let .badStatus(code, _) = uploadError {
+            switch code {
+            case 401, 403:
+                return "This iPhone isn't authorized to reach the server. \(base)\n\nThe app likely needs an update with the current access key — retrying won't fix it."
+            case 500...599:
+                return "The server hit a problem and couldn't finish. \(base)\n\nTry again in a moment."
+            default:
+                return "The server couldn't process the visit (error \(code)). \(base)\n\nTry again in a moment."
+            }
+        }
         guard let urlError = error as? URLError else {
             return "Sending to your Mac failed. \(base)\n\nTry again in a moment."
         }
@@ -361,6 +563,23 @@ final class VisitController: ObservableObject {
         default:
             return "Sending to your Mac failed. \(base)\n\nTry again in a moment."
         }
+    }
+
+    /// Painter-facing reason a "proposed result" render failed. Presentation
+    /// only — the quote itself is never affected by a missing visualization.
+    private static func friendlyRenderError(_ error: Error) -> String {
+        if let uploadError = error as? HTTPBackendClient.UploadError,
+           case let .badStatus(code, _) = uploadError {
+            switch code {
+            case 503:
+                return "The preview service is temporarily unavailable. Your quote is unaffected — retry, or share the quote without the preview."
+            case 409:
+                return "A preview needs a Before photo and the recorded conversation. Your quote is unaffected."
+            default:
+                break
+            }
+        }
+        return "The preview couldn't be created right now. Your quote is unaffected."
     }
 
     private static func visitName(for customer: CustomerInfo?) -> String {

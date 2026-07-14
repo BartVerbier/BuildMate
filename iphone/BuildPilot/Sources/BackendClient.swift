@@ -9,7 +9,7 @@ import Foundation
 /// see BackendLocator.
 protocol BackendClient {
     func isReachable() async -> Bool
-    func submitVisit(roomScan: Data, audioFile: URL?, poses: Data?) async throws -> SessionResponse
+    func submitVisit(roomScan: Data, audioFile: URL?, poses: Data?, companyProfile: CompanyProfilePayload?) async throws -> SessionResponse
 }
 
 /// HTTP implementation of the Build Pilot backend API
@@ -43,7 +43,24 @@ struct HTTPBackendClient: BackendClient {
         }
     }
 
-    func submitVisit(roomScan: Data, audioFile: URL?, poses: Data? = nil) async throws -> SessionResponse {
+    /// Fetches /health so the app can show which backend commit it's talking to
+    /// and whether visualization is available — the on-device version check.
+    func serverInfo() async -> ServerInfo? {
+        var request = URLRequest(url: baseURL.appendingPathComponent("health"))
+        request.timeoutInterval = 5
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            return try decoder.decode(ServerInfo.self, from: data)
+        } catch {
+            visitLog.error("serverInfo \(baseURL.absoluteString) failed: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    func submitVisit(roomScan: Data, audioFile: URL?, poses: Data? = nil, companyProfile: CompanyProfilePayload? = nil) async throws -> SessionResponse {
         var request = authorizedRequest(url: baseURL.appendingPathComponent("sessions"))
         request.httpMethod = "POST"
         // Transcription on the backend can take a while for long visits; the
@@ -63,6 +80,13 @@ struct HTTPBackendClient: BackendClient {
         if let poses {
             appendPart(&body, boundary: boundary, name: "poses",
                        fileName: "poses.json", contentType: "application/json", data: poses)
+        }
+        // The contractor's pricing snapshot for this visit. The backend freezes
+        // it onto the session, so this visit is priced by these defaults forever
+        // — later settings changes never touch it. Malformed → server default.
+        if let companyProfile, let json = companyProfile.jsonData() {
+            appendField(&body, boundary: boundary, name: "company_profile",
+                        value: String(decoding: json, as: UTF8.self))
         }
         body.append(Data("--\(boundary)--\r\n".utf8))
         request.httpBody = body
@@ -127,6 +151,27 @@ struct HTTPBackendClient: BackendClient {
         return try decoder.decode(RevisionResponse.self, from: data)
     }
 
+    /// Sends structured manual plan edits; the backend re-derives areas, re-runs
+    /// the deterministic estimator, versions the prior state, and returns the
+    /// updated session with price deltas + render_required.
+    func reestimate(sessionID: String, edit: PlanEditPayload) async throws -> RevisionResponse {
+        var request = authorizedRequest(url: baseURL.appendingPathComponent("sessions/\(sessionID)/reestimate"))
+        request.httpMethod = "POST"
+        request.timeoutInterval = 60
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        request.httpBody = try encoder.encode(edit)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+            throw UploadError.badStatus(http.statusCode, String(decoding: data, as: UTF8.self))
+        }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(RevisionResponse.self, from: data)
+    }
+
     /// Archives a visit photo to the backend's session directory (the
     /// permanent project record). Best-effort: the phone keeps its own copy.
     /// `t` is the capture time on the visit clock — it links the photo to a
@@ -157,18 +202,27 @@ struct HTTPBackendClient: BackendClient {
         }
     }
 
-    /// Builds a request with the shared bearer token attached. Used by every
-    /// endpoint except /health (which is unauthenticated on the backend). The
-    /// token comes from the single source, BackendLocator.apiToken; when it is
-    /// empty (local dev) no header is added and the local backend accepts the
-    /// request as before.
+    /// Builds a request carrying this device's contractor identity: the shared
+    /// bearer token (when configured) and the contractor id the backend files
+    /// the project under. Used by every endpoint except /health. When the token
+    /// is empty (local dev) no Authorization header is added and the local Mac
+    /// accepts the request as before.
     private func authorizedRequest(url: URL) -> URLRequest {
         var request = URLRequest(url: url)
-        let token = BackendLocator.apiToken
-        if !token.isEmpty {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let identity = ContractorIdentity.current
+        if !identity.apiToken.isEmpty {
+            request.setValue("Bearer \(identity.apiToken)", forHTTPHeaderField: "Authorization")
         }
+        // Declares which contractor owns this project. Harmless in single-tenant
+        // V1 (the backend defaults to the same id); the routing seam for
+        // per-contractor sync.
+        request.setValue(identity.contractorId, forHTTPHeaderField: "X-Contractor-Id")
         return request
+    }
+
+    private func appendField(_ body: inout Data, boundary: String, name: String, value: String) {
+        body.append(Data("--\(boundary)\r\n".utf8))
+        body.append(Data("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n\(value)\r\n".utf8))
     }
 
     private func appendPart(_ body: inout Data, boundary: String, name: String,
@@ -194,15 +248,9 @@ enum BackendLocator {
     /// Set when the cloud backend ships, e.g. URL(string: "https://api.buildpilot.example").
     static let productionURL = URL(string: "https://buildmate-production-4086.up.railway.app")
 
-    /// The shared bearer token for the protected backend — must match the
-    /// server's BUILDPILOT_API_TOKEN. This is the ONE place the token lives
-    /// in the whole app; paste it between the quotes below.
-    ///
-    /// Leave it empty for pure-local development: the local Mac backend runs
-    /// with authentication disabled and ignores the header, so localhost
-    /// keeps working either way. When non-empty it is sent on every request
-    /// except /health (see HTTPBackendClient.authorizedRequest).
-    static let apiToken = ""
+    // The shared bearer token now lives in build-time configuration, not source
+    // — see ContractorIdentity / Secrets.xcconfig. HTTPBackendClient reads it
+    // from ContractorIdentity.current.
 
     static func locate(configuredURLString: String) async -> URL? {
         if let productionURL {

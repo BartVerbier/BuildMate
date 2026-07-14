@@ -18,6 +18,12 @@ from pydantic import BaseModel, Field
 
 SESSION_SCHEMA_VERSION = "1.0"
 
+# Every project belongs to exactly one contractor. V1 is single-tenant, so a
+# well-known id backfills existing/local sessions; the multi-tenant seam
+# (identity.ContractorResolver) routes real contractors to their own id
+# without any change to the data model. See docs/DECISIONS.md.
+DEFAULT_CONTRACTOR_ID = "default"
+
 
 class SessionStatus(str, Enum):
     DRAFT = "draft"
@@ -82,6 +88,45 @@ class RoomMeasurement(BaseModel):
     # the walls actually being painted. Empty for sessions from older scans.
     walls: List[WallDetail] = Field(default_factory=list)
     notes: List[str] = Field(default_factory=list)
+    # Structured capture-quality signals for the confidence engine. Typed here
+    # (rather than string-matched from `notes`) so scoring reads real data.
+    # Optional/None means "not assessable from this scan" — the engine abstains
+    # on that signal rather than penalising an older session.
+    wall_perimeter_ratio: Optional[float] = Field(default=None, ge=0)
+    floor_captured: Optional[bool] = None
+
+
+class ConfidenceSignal(BaseModel):
+    """One contributor to the overall confidence score.
+
+    Future capture-quality signals (lighting, device motion, furniture
+    occlusion, manual-edit count, ...) register as additional providers that
+    emit this same shape. The engine blends whatever signals are present and
+    every consumer renders them generically, so adding a signal needs no engine
+    or UI redesign.
+    """
+
+    key: str
+    label: str
+    score: float = Field(ge=0, le=1)   # normalised quality, 1.0 = best
+    weight: float = Field(ge=0)        # relative importance in the blend
+    detail: str                        # plain-language explanation
+    tip: Optional[str] = None          # how to improve it, when this signal is low
+
+
+class ConfidenceReport(BaseModel):
+    """Deterministic, explainable measurement-trust score (0-100). Never AI.
+
+    `band` and `tips` are the display contract: consumers read the band instead
+    of hard-coding a threshold, and render `tips` verbatim to guide a re-scan.
+    """
+
+    score: int = Field(ge=0, le=100)
+    band: str                          # "high" | "medium" | "low"
+    headline: str
+    signals: List[ConfidenceSignal] = Field(default_factory=list)
+    tips: List[str] = Field(default_factory=list)
+    engine_version: str = "1.0"
 
 
 class PaintScope(BaseModel):
@@ -154,6 +199,9 @@ class Session(BaseModel):
 
     session_id: str
     schema_version: str = SESSION_SCHEMA_VERSION
+    # The contractor who owns this project. Backfilled to DEFAULT_CONTRACTOR_ID
+    # for sessions saved before multi-tenant support so they load unchanged.
+    contractor_id: str = DEFAULT_CONTRACTOR_ID
     status: SessionStatus = SessionStatus.DRAFT
     created_at: datetime
     updated_at: datetime
@@ -164,4 +212,5 @@ class Session(BaseModel):
     requirements: Optional[RequirementExtraction] = None
     company_profile: Optional[CompanyProfile] = None
     estimate: Optional[EstimateDraft] = None
+    confidence: Optional[ConfidenceReport] = None
     raw_metadata: Dict[str, Any] = Field(default_factory=dict)

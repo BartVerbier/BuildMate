@@ -24,6 +24,7 @@ from buildpilot.pipelines.interfaces import (
     RequirementsExtractor,
     Transcriber,
 )
+from buildpilot.pipelines.confidence import score_measurement
 from buildpilot.pipelines.measurement import MeasurementError
 from buildpilot.pipelines.transcription import TranscriptionError
 from buildpilot.session_store import TRANSCRIPT_FILE, SessionStore
@@ -79,6 +80,12 @@ class VisitPipeline:
         with self._timed(session, "measure"):
             captured_room = store.load_room_scan(session)
             session.measurements = self.measurement_engine.measure(captured_room)
+        # Confidence report: deterministic, explainable trust score over the
+        # capture-quality signals. Recomputed after any manual measurement edit
+        # (the same engine, with the edit-count signal then present).
+        session.confidence = score_measurement(
+            session.measurements, session.raw_metadata
+        )
         store.save(session)
 
         # 2. Transcription (local Whisper; optional). Timed segments are

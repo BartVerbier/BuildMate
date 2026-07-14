@@ -62,8 +62,14 @@ struct ContentView: View {
                     visitName: visit.visitName,
                     history: visit.history,
                     visualizationPending: visit.visualizationPending,
+                    renderError: visit.renderError,
+                    onRetryRender: { visit.retryRenders() },
                     changes: visit.lastChanges,
-                    onMakeChanges: { Task { await visit.startRevision() } }
+                    onMakeChanges: { Task { await visit.startRevision() } },
+                    onRescan: { Task { await visit.rescan() } },
+                    onEditPlan: { payload, pdfStale, vizStale in
+                        Task { await visit.savePlanEdit(payload: payload, pdfStale: pdfStale, visualizationStale: vizStale) }
+                    }
                 ) {
                     visit.reset()
                 }

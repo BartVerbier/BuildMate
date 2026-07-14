@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from buildpilot.models.session import (
+    DEFAULT_CONTRACTOR_ID,
     AudioCapture,
     RoomScanCapture,
     Session,
@@ -54,6 +55,7 @@ class SessionStore:
         room_scan_bytes: bytes,
         audio_bytes: Optional[bytes],
         capture_device: str = "iphone",
+        contractor_id: str = DEFAULT_CONTRACTOR_ID,
     ) -> Session:
         session_id = self.new_session_id()
         directory = self.session_dir(session_id)
@@ -72,6 +74,7 @@ class SessionStore:
         now = datetime.now(timezone.utc)
         session = Session(
             session_id=session_id,
+            contractor_id=contractor_id,
             status=SessionStatus.IN_PROGRESS,
             created_at=now,
             updated_at=now,
@@ -89,14 +92,24 @@ class SessionStore:
         tmp.write_text(session.model_dump_json(indent=2))
         tmp.replace(path)
 
-    def load(self, session_id: str) -> Optional[Session]:
+    def load(
+        self, session_id: str, contractor_id: Optional[str] = None
+    ) -> Optional[Session]:
+        """Loads a session. When `contractor_id` is given, enforces ownership:
+        a session belonging to a different contractor reads as not-found, so a
+        contractor can never reach another's project. `None` (the default,
+        used by the Mac console) skips the check for single-tenant local use."""
         path = self.session_dir(session_id) / SESSION_FILE
         if not path.exists():
             return None
-        return Session.model_validate_json(path.read_text())
+        session = Session.model_validate_json(path.read_text())
+        if contractor_id is not None and session.contractor_id != contractor_id:
+            return None
+        return session
 
-    def list_sessions(self) -> list[Session]:
-        """All sessions, newest first. Skips directories without a valid record."""
+    def list_sessions(self, contractor_id: Optional[str] = None) -> list[Session]:
+        """Sessions newest first, filtered to one contractor when given.
+        Skips directories without a valid record."""
         sessions: list[Session] = []
         for directory in self.root.iterdir():
             if not directory.is_dir():
@@ -105,9 +118,12 @@ class SessionStore:
             if not path.exists():
                 continue
             try:
-                sessions.append(Session.model_validate_json(path.read_text()))
+                session = Session.model_validate_json(path.read_text())
             except ValueError:
                 continue
+            if contractor_id is not None and session.contractor_id != contractor_id:
+                continue
+            sessions.append(session)
         sessions.sort(key=lambda s: s.created_at, reverse=True)
         return sessions
 

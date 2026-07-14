@@ -66,7 +66,14 @@ inspectable artifacts.
    defensively (both known encodings of enums/matrices), floor area from the
    scanned polygon with a wall-footprint fallback, area-weighted confidence,
    and notes explaining every non-obvious choice. Required: failure fails the
-   session.
+   session. Emits structured capture-quality signals (`wall_perimeter_ratio`,
+   `floor_captured`) for the confidence engine.
+1b. **Confidence** (`pipelines/confidence.py`, Decision 31) — deterministic,
+   never AI. Blends independent signal providers (geometry confidence, wall
+   completeness, floor coverage today; lighting/motion/occlusion/edit-count are
+   the named extension points) into a 0–100 `ConfidenceReport` with per-signal
+   reasons and improvement tips, attached to the session. Recomputed after a
+   manual measurement edit.
 2. **Transcription** (`pipelines/transcription.py`) — local Whisper, selected
    per platform by `select_transcriber()`: MLX Whisper on Apple Silicon
    (audio decoded with macOS `afconvert`, Decision 15), `faster-whisper` on
@@ -117,7 +124,7 @@ route, so any endpoint added later is protected by default.
 
 | Method + path | Purpose |
 |---|---|
-| `GET /health` | Status + stage availability; the only always-open path |
+| `GET /health` | Status + stage availability (transcriber, extractor, and `visualizer_available`); the only always-open path |
 | `POST /sessions` | Multipart (`room_scan` JSON required, `audio`, `poses`); runs the pipeline synchronously, returns the completed session |
 | `GET /sessions` | All sessions, newest first |
 | `GET /sessions/{id}` | Re-fetch (reconnect after a dropped call) |
@@ -178,11 +185,15 @@ the backend returns; no interpretation on the device. It talks only to the
 ### Backend (`backend/buildpilot/`)
 - `models/session.py` — the versioned `Session` Pydantic contract (metric, EUR),
   the single source of truth passed device → backend → device.
-- `pipelines/` — `measurement`, `transcription`, `gaze`, `extraction`,
-  `estimator`, `visualization`, and the stage protocols in `interfaces.py`.
+- `pipelines/` — `measurement`, `confidence`, `transcription`, `gaze`,
+  `extraction`, `estimator`, `visualization`, and the stage protocols in
+  `interfaces.py`.
 - `pipeline.py` — orchestration with the degradation policy above.
 - `server.py` — the FastAPI app and every endpoint.
-- `auth.py` — the bearer-token gate.
+- `auth.py` — the bearer-token gate (authentication).
+- `identity.py` — the per-contractor identity seam (tenancy, Decision 30):
+  resolves which contractor owns each request; `SessionStore` enforces
+  ownership so one contractor can't read another's project.
 - `session_store.py` — session-directory storage (Decision 11).
 - `config.py` — the hard-coded V1 `DEFAULT_COMPANY_PROFILE` (EUR), modelled as
   a first-class estimator input so it becomes configurable later without

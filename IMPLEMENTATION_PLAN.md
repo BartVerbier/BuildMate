@@ -2,15 +2,26 @@
 
 ## Status
 
-**Prototype branch (`prototype-v1`, 2026-07-10):** Milestones 2–5 were built
-end-to-end in a single authorized run. All backend stages are implemented and
-tested (39 tests, incl. a gated real-Whisper integration test); the iPhone
-app compiles for iOS but has not yet run on a
-physical device. Remaining for a live demo: run the app on the founder's
-iPhone against the Mac backend (Milestone 6 field testing), and set
-`ANTHROPIC_API_KEY` to enable requirements extraction.
+**Prototype branch (`prototype-v1`):** Milestones 1–5 built end-to-end; the
+backend is deployed on Railway with bearer auth, Anthropic extraction, and
+Gemini/Vertex visualization, and the iPhone app has been verified against it
+over 5G. Backend suite: 110 tests + a gated real-Whisper integration test.
 
-On the main branch, work proceeds milestone by milestone with founder review.
+**Pre-TestFlight sequencing (Decision 29, 2026-07-12):** while Apple Developer
+activation is pending, work is hardening-first, not feature-first:
+
+- **M1 — Reliability + After-in-PDF fix + Confidence score — ✅ complete.**
+  Differentiated network/AI errors, surfaced-and-retryable renders, guaranteed
+  PDF re-render when the After lands, honest processing progress, a
+  deterministic extensible confidence engine (Decision 31), the per-contractor
+  identity foundation (Decision 30), and the API token moved out of source.
+  Backend green; iOS compiles clean against the iOS 26 SDK (device run pending).
+- **M2 — Design-system pass** — next.
+- **Flagship — Manual measurement editing** — before first TestFlight.
+- **Then** the remaining sprints (project management with reinstall-surviving,
+  multi-device sync; settings; quote redesign), reordered by real visits.
+
+Work proceeds milestone by milestone with founder review at each hard stop.
 
 ## Architecture Summary
 

@@ -36,7 +36,7 @@ struct VisitsHomeView: View {
             startButton
         }
         .sheet(isPresented: $showSettings) {
-            SettingsSheet(backendURLString: visit.$backendURLString)
+            SettingsSheet(backendURLString: visit.$backendURLString, settings: visit.settings)
         }
     }
 
@@ -53,7 +53,18 @@ struct VisitsHomeView: View {
             Section("Recent Visits") {
                 ForEach(history.records) { record in
                     NavigationLink {
-                        EstimateView(session: record.session, visitName: record.name, history: history, onDone: nil)
+                        EstimateView(
+                            session: record.session, visitName: record.name, history: history,
+                            onEditPlan: { payload, pdfStale, vizStale in
+                                Task {
+                                    await visit.editHistoricalPlan(
+                                        record: record, payload: payload,
+                                        pdfStale: pdfStale, visualizationStale: vizStale
+                                    )
+                                }
+                            },
+                            onDone: nil
+                        )
                     } label: {
                         VisitRow(record: record)
                     }
@@ -100,7 +111,7 @@ private struct VisitRow: View {
             }
             Spacer()
             if let quote = record.session.estimate?.suggestedQuotationEur {
-                Text(Format.euroRounded(quote))
+                Text(Format.money(quote, currency: record.session.currencyCode, rounded: true))
                     .font(.body.weight(.semibold).monospacedDigit())
                     .foregroundStyle(.yellow)
             }
@@ -111,79 +122,34 @@ private struct VisitRow: View {
 
 struct SettingsSheet: View {
     @Binding var backendURLString: String
+    @ObservedObject var settings: ContractorSettingsStore
     @Environment(\.dismiss) private var dismiss
     @StateObject private var discovery = BackendDiscovery()
     @State private var resolvingMacID: String?
     @State private var selectedMacID: String?
     @State private var selectionOK: Bool?
     @State private var showManualEntry = false
+    @State private var confirmReset = false
 
-    // Shown on every quote the customer receives. No CRM — just identity.
-    @AppStorage("business.company") private var companyName = ""
-    @AppStorage("business.painter") private var painterName = ""
-    @AppStorage("business.phone") private var businessPhone = ""
-    @AppStorage("business.email") private var businessEmail = ""
-    @AppStorage("business.terms") private var terms = BusinessIdentity.defaultTerms
     @State private var logoSelection: PhotosPickerItem?
     @State private var logo: UIImage? = UIImage(contentsOfFile: BusinessIdentity.logoFileURL.path)
+
+    // Version verification: which backend this phone is actually talking to.
+    @State private var serverInfo: ServerInfo?
+    @State private var loadingServer = false
+
+    /// The currency every money field + the quote reads in.
+    private var currency: String { settings.settings.business.currencyCode }
 
     var body: some View {
         NavigationStack {
             Form {
-                Section {
-                    TextField("Company name", text: $companyName)
-                        .textContentType(.organizationName)
-                    TextField("Your name", text: $painterName)
-                        .textContentType(.name)
-                    TextField("Phone", text: $businessPhone)
-                        .textContentType(.telephoneNumber)
-                        .keyboardType(.phonePad)
-                    TextField("Email", text: $businessEmail)
-                        .textContentType(.emailAddress)
-                        .keyboardType(.emailAddress)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
-                } header: {
-                    Text("Your Business")
-                } footer: {
-                    Text("Shown on every quote you share with a customer.")
-                }
-
-                Section {
-                    PhotosPicker(selection: $logoSelection, matching: .images) {
-                        HStack {
-                            Text(logo == nil ? "Add company logo" : "Change company logo")
-                            Spacer()
-                            if let logo {
-                                Image(uiImage: logo)
-                                    .resizable()
-                                    .scaledToFit()
-                                    .frame(height: 32)
-                                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                            }
-                        }
-                    }
-                    if logo != nil {
-                        Button("Remove logo", role: .destructive) {
-                            logo = nil
-                            BusinessIdentity.saveLogo(nil)
-                        }
-                    }
-                } header: {
-                    Text("Company Logo")
-                } footer: {
-                    Text("Appears at the top of the quote PDF.")
-                }
-
-                Section {
-                    TextEditor(text: $terms)
-                        .frame(minHeight: 90)
-                        .font(.footnote)
-                } header: {
-                    Text("Terms & Conditions")
-                } footer: {
-                    Text("Printed at the bottom of every quote.")
-                }
+                businessSection
+                pricingSection
+                paintSection
+                consumablesSection
+                quoteSection
+                resetSection
 
                 Section {
                     if discovery.macs.isEmpty {
@@ -221,6 +187,34 @@ struct SettingsSheet: View {
                             .onSubmit { Task { await verifyCurrent() } }
                     }
                 }
+
+                Section {
+                    LabeledContent("App build", value: Self.appVersion)
+                    HStack {
+                        Text("Backend")
+                        Spacer()
+                        if loadingServer {
+                            ProgressView()
+                        } else {
+                            Text(serverInfo?.version?.commit ?? "unreachable")
+                                .font(.footnote.monospaced())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    if let viz = serverInfo?.visualizerAvailable {
+                        HStack {
+                            Text("Visualization")
+                            Spacer()
+                            Text(viz ? "Available" : "Unavailable")
+                                .foregroundStyle(viz ? .green : .orange)
+                        }
+                    }
+                } header: {
+                    Text("Version")
+                } footer: {
+                    Text("The After image needs Visualization = Available. To be sure the phone and backend run matching code, build the app from the same commit the backend reports.")
+                }
+                .task { await loadServerInfo() }
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
@@ -241,6 +235,127 @@ struct SettingsSheet: View {
                     logo = image
                     BusinessIdentity.saveLogo(image)
                 }
+            }
+        }
+        .confirmationDialog(
+            "Reset all business and pricing settings to their defaults?",
+            isPresented: $confirmReset, titleVisibility: .visible
+        ) {
+            Button("Reset to Defaults", role: .destructive) {
+                settings.resetToDefaults()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Your company details, pricing, paint and materials return to the starting values. Quotes you've already created keep their own saved settings.")
+        }
+    }
+
+    // MARK: - the four settings sections (kept deliberately small)
+
+    /// 🏢 Business — identity shown on the quote, plus logo and currency. Only
+    /// fields a painter actually fills in; blanks are simply left off the quote.
+    private var businessSection: some View {
+        Section {
+            TextField("Company name", text: $settings.settings.business.companyName)
+                .textContentType(.organizationName)
+            TextField("Your name", text: $settings.settings.business.contactName)
+                .textContentType(.name)
+            TextField("Phone", text: $settings.settings.business.phone)
+                .textContentType(.telephoneNumber)
+                .keyboardType(.phonePad)
+            TextField("Email", text: $settings.settings.business.email)
+                .textContentType(.emailAddress)
+                .keyboardType(.emailAddress)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+            TextField("Address", text: $settings.settings.business.address, axis: .vertical)
+                .lineLimit(1 ... 3)
+                .textContentType(.fullStreetAddress)
+            TextField("VAT / CVR number", text: $settings.settings.business.vatNumber)
+                .autocorrectionDisabled()
+            Picker("Currency", selection: $settings.settings.business.currencyCode) {
+                ForEach(CurrencyCatalog.options, id: \.code) { option in
+                    Text("\(option.name) (\(option.symbol))").tag(option.code)
+                }
+            }
+            PhotosPicker(selection: $logoSelection, matching: .images) {
+                HStack {
+                    Text(logo == nil ? "Add company logo" : "Change company logo")
+                    Spacer()
+                    if let logo {
+                        Image(uiImage: logo)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(height: 32)
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                    }
+                }
+            }
+            if logo != nil {
+                Button("Remove logo", role: .destructive) {
+                    logo = nil
+                    BusinessIdentity.saveLogo(nil)
+                }
+            }
+        } header: {
+            Text("🏢 Business")
+        } footer: {
+            Text("Shown on every quote. Leave anything blank and it's simply left off.")
+        }
+    }
+
+    /// 💰 Pricing — one number: what an hour of labour costs.
+    private var pricingSection: some View {
+        Section {
+            MoneyField(title: "Hourly Rate", currencyCode: currency,
+                       amount: $settings.settings.pricing.hourlyRate)
+        } header: {
+            Text("💰 Pricing")
+        }
+    }
+
+    /// 🎨 Paint — just paint price and coverage.
+    private var paintSection: some View {
+        Section {
+            MoneyField(title: "Paint Price", currencyCode: currency,
+                       amount: $settings.settings.paint.paintCostPerLitre, footnote: "per litre")
+            DecimalField(title: "Coverage", value: $settings.settings.paint.paintCoverageM2PerLitre,
+                         unit: "m²/L", minimum: 0.1)
+        } header: {
+            Text("🎨 Paint")
+        } footer: {
+            Text("Coverage must be greater than zero — it converts area into litres.")
+        }
+    }
+
+    /// 🧰 Consumables — one flat cost for everything used up on a normal job.
+    private var consumablesSection: some View {
+        Section {
+            MoneyField(title: "Consumables Cost", currencyCode: currency,
+                       amount: $settings.settings.materials.consumablesAllowance)
+        } header: {
+            Text("🧰 Consumables")
+        } footer: {
+            Text("One value for tape, plastic, paper, roller sleeves, sandpaper and other small consumables.")
+        }
+    }
+
+    /// 📄 Quote — the two commercial figures on the final price.
+    private var quoteSection: some View {
+        Section {
+            PercentField(title: "VAT", fraction: $settings.settings.pricing.vatFraction)
+            MoneyField(title: "Minimum charge", currencyCode: currency,
+                       amount: $settings.settings.pricing.minimumCharge,
+                       footnote: "Price floor before VAT. 0 = no minimum.")
+        } header: {
+            Text("📄 Quote")
+        }
+    }
+
+    private var resetSection: some View {
+        Section {
+            Button("Reset to Defaults", role: .destructive) {
+                confirmReset = true
             }
         }
     }
@@ -294,5 +409,23 @@ struct SettingsSheet: View {
             return
         }
         selectionOK = await HTTPBackendClient(baseURL: url).isReachable()
+    }
+
+    /// The app's own version: marketing version, build number, and the git SHA
+    /// if a build stamped one into the Info.plist (falls back gracefully).
+    private static var appVersion: String {
+        let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
+        if let sha = AppConfig.string("GitSHA") {
+            return "\(short) · \(sha)"
+        }
+        return "\(short) (\(build))"
+    }
+
+    private func loadServerInfo() async {
+        loadingServer = true
+        defer { loadingServer = false }
+        guard let url = await BackendLocator.locate(configuredURLString: backendURLString) else { return }
+        serverInfo = await HTTPBackendClient(baseURL: url).serverInfo()
     }
 }

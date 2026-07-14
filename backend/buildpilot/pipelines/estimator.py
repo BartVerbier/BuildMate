@@ -22,6 +22,7 @@ from buildpilot.models.session import (
     RequirementExtraction,
     RoomMeasurement,
 )
+from buildpilot.pipelines.confidence import GEOMETRY_WARNING_THRESHOLD
 
 PAINT_ROUNDING_LITRES = 0.5
 LABOUR_ROUNDING_HOURS = 0.25
@@ -141,7 +142,7 @@ class DeterministicEstimator:
             f"travel {money(p.travel_cost_eur)}) x {1 + p.profit_margin:.2f} margin "
             f"x {1 + p.vat_rate:.2f} VAT = {quotation} {p.currency}"
         )
-        if measurements.confidence_score < 0.6:
+        if measurements.confidence_score < GEOMETRY_WARNING_THRESHOLD:
             assumptions.append(
                 f"WARNING: low scan confidence ({measurements.confidence_score:.2f}) - verify measurements"
             )

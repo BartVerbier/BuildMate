@@ -7,6 +7,7 @@ import UIKit
 /// upload is never killed by the device sleeping mid-coffee.
 struct ProcessingView: View {
     let stage: VisitController.ProcessingStage
+    @State private var startedAt = Date()
 
     private var isRevision: Bool { stage == .updatingQuote }
 
@@ -56,6 +57,27 @@ struct ProcessingView: View {
                 .padding(.horizontal, 40)
                 .padding(.top, 20)
 
+            // Honest, indeterminate progress: no fake percentage, but the
+            // painter can see it's still working (and that a longer visit
+            // simply takes longer) rather than staring at a frozen screen.
+            TimelineView(.periodic(from: startedAt, by: 1)) { context in
+                let seconds = max(0, Int(context.date.timeIntervalSince(startedAt)))
+                VStack(spacing: 6) {
+                    Text(Self.elapsed(seconds))
+                        .font(.footnote.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                    if seconds >= 40 {
+                        Text("Longer visits take a little more time — keep the app open.")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 40)
+                            .transition(.opacity)
+                    }
+                }
+                .padding(.top, 14)
+            }
+
             Spacer()
             Spacer()
         }
@@ -63,6 +85,10 @@ struct ProcessingView: View {
         .background(Color(.systemGroupedBackground))
         .onAppear { UIApplication.shared.isIdleTimerDisabled = true }
         .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
+    }
+
+    private static func elapsed(_ seconds: Int) -> String {
+        String(format: "%d:%02d", seconds / 60, seconds % 60)
     }
 }
 

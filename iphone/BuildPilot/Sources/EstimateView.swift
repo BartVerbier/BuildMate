@@ -4,13 +4,48 @@ import SwiftUI
 /// to build confidence in that number. Used in the visit flow (onDone set)
 /// and when reopening a recent visit (onDone nil, plain navigation).
 struct EstimateView: View {
-    let session: SessionResponse
+    /// The snapshot this view was created with. The displayed `session`
+    /// (computed below) prefers the latest from history, so an in-place edit —
+    /// live or on a reopened visit — refreshes this screen immediately.
+    let passedSession: SessionResponse
     let visitName: String
     @ObservedObject var history: VisitHistoryStore
     var visualizationPending: Bool = false
+    var renderError: String? = nil
+    var onRetryRender: (() -> Void)? = nil
     var changes: [String] = []
     var onMakeChanges: (() -> Void)? = nil
+    /// Re-capture the room geometry (live visit only). Nil on reopened visits.
+    var onRescan: (() -> Void)? = nil
+    /// Save manual plan edits: (payload, pdfStale, vizStale). Provided on the
+    /// live visit and on reopened history; nil disables editing.
+    var onEditPlan: ((PlanEditPayload?, Bool, Bool) -> Void)? = nil
     let onDone: (() -> Void)?
+
+    init(session: SessionResponse, visitName: String, history: VisitHistoryStore,
+         visualizationPending: Bool = false, renderError: String? = nil,
+         onRetryRender: (() -> Void)? = nil, changes: [String] = [],
+         onMakeChanges: (() -> Void)? = nil, onRescan: (() -> Void)? = nil,
+         onEditPlan: ((PlanEditPayload?, Bool, Bool) -> Void)? = nil,
+         onDone: (() -> Void)?) {
+        self.passedSession = session
+        self.visitName = visitName
+        self._history = ObservedObject(wrappedValue: history)
+        self.visualizationPending = visualizationPending
+        self.renderError = renderError
+        self.onRetryRender = onRetryRender
+        self.changes = changes
+        self.onMakeChanges = onMakeChanges
+        self.onRescan = onRescan
+        self.onEditPlan = onEditPlan
+        self.onDone = onDone
+    }
+
+    /// The current session — the latest from history (so edits refresh instantly),
+    /// falling back to the snapshot before the visit is in history.
+    private var session: SessionResponse {
+        history.record(for: passedSession.sessionId)?.session ?? passedSession
+    }
 
     @State private var quoteURL: URL?
     @State private var takingPhotoKind: PhotoKind?
@@ -20,6 +55,7 @@ struct EstimateView: View {
     @State private var showPreview = false
     @State private var showMail = false
     @State private var showSystemShare = false
+    @State private var showEditPlan = false
     @State private var accepted = false
 
     struct ViewerSelection: Identifiable {
@@ -29,6 +65,15 @@ struct EstimateView: View {
     @AppStorage("backendURL") private var backendURLString = ""
 
     private var record: VisitRecord? { history.record(for: session.sessionId) }
+    /// The business identity for THIS quote: the frozen snapshot when the visit
+    /// has one (so a historical PDF keeps the details it was created with), else
+    /// the live settings (a brand-new visit, or a record from before snapshots).
+    private var identity: BusinessIdentity {
+        if let snapshot = record?.businessSnapshot {
+            return BusinessIdentity.from(snapshot: snapshot, visitID: session.sessionId)
+        }
+        return BusinessIdentity.load()
+    }
     private var allPhotos: [VisitPhoto] { record?.photos ?? [] }
     /// Camera photos only — the AI renders have their own card.
     private var photos: [VisitPhoto] { allPhotos.filter { !$0.kind.isRender } }
@@ -50,6 +95,11 @@ struct EstimateView: View {
             }
             .safeAreaInset(edge: .bottom) { shareBar }
             .task { renderQuote() }
+            // The AI renders arrive asynchronously, after the screen is already
+            // shown. Re-render the PDF the moment they land so Share/Preview
+            // always includes the latest — never rely on a subview's onAppear.
+            .onChange(of: visualization?.id) { renderQuote() }
+            .onChange(of: preparationRender?.id) { renderQuote() }
             .modifier(WrapInStackIfNeeded(needsStack: onDone != nil))
     }
 
@@ -126,6 +176,21 @@ struct EstimateView: View {
                 Text("AI visualization based on your room — final result may vary slightly.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if record?.visualizationStale == true {
+                    HStack(spacing: 8) {
+                        Label("Preview may be outdated after your edits.", systemImage: "exclamationmark.triangle")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                        Spacer()
+                        if onRetryRender != nil {
+                            Button("Regenerate") {
+                                onRetryRender?()
+                                history.clearStale(visualization: true, for: session.sessionId)
+                            }
+                            .font(.caption.weight(.semibold))
+                        }
+                    }
+                }
             }
             .onAppear { renderQuote() } // ensure the PDF includes it
         } else if visualizationPending {
@@ -137,6 +202,23 @@ struct EstimateView: View {
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, minHeight: 44)
+            }
+        } else if let renderError {
+            Card(title: "Proposed Result") {
+                Label(renderError, systemImage: "photo.badge.exclamationmark")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                if let onRetryRender {
+                    Button {
+                        onRetryRender()
+                    } label: {
+                        Label("Try Again", systemImage: "arrow.clockwise")
+                            .font(.body.weight(.medium))
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.yellow)
+                }
             }
         }
     }
@@ -282,7 +364,7 @@ struct EstimateView: View {
             Text(visitName)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
-            Text(Format.euroRounded(session.estimate?.suggestedQuotationEur ?? 0))
+            Text(Format.money(session.estimate?.suggestedQuotationEur ?? 0, currency: session.currencyCode, rounded: true))
                 .font(.system(size: 58, weight: .heavy, design: .rounded))
                 .monospacedDigit()
                 .foregroundStyle(.yellow)
@@ -303,9 +385,9 @@ struct EstimateView: View {
     private var breakdownCard: some View {
         Card(title: "Estimate Breakdown") {
             if let e = session.estimate {
-                LabeledRow("Labour", detail: Format.hours(e.labourHours), value: Format.euro(e.labourCostEur), symbol: "person.2.fill")
+                LabeledRow("Labour", detail: Format.hours(e.labourHours), value: Format.money(e.labourCostEur, currency: session.currencyCode), symbol: "person.2.fill")
                 Divider().padding(.leading, 32)
-                LabeledRow("Materials", value: Format.euro(e.materialCostEur), symbol: "shippingbox.fill")
+                LabeledRow("Materials", value: Format.money(e.materialCostEur, currency: session.currencyCode), symbol: "shippingbox.fill")
                 Divider().padding(.leading, 32)
                 preparationRow
                 Divider().padding(.leading, 32)
@@ -316,7 +398,7 @@ struct EstimateView: View {
                 HStack {
                     Text("Total Estimate").font(.headline)
                     Spacer()
-                    Text(Format.euro(e.suggestedQuotationEur))
+                    Text(Format.money(e.suggestedQuotationEur, currency: session.currencyCode))
                         .font(.title3.weight(.bold).monospacedDigit())
                         .foregroundStyle(.black)
                 }
@@ -365,18 +447,47 @@ struct EstimateView: View {
             LabeledRow("Walls (net)", value: Format.squareMetres(m.netWallAreaM2))
             LabeledRow("Ceiling", value: Format.squareMetres(m.ceilingAreaM2))
             LabeledRow("Floor", value: Format.squareMetres(m.floorAreaM2))
-            LabeledRow("Measurements", value: m.confidenceScore >= 0.6 ? "Good" : "Check the room")
-            if m.notes.contains(where: { $0.contains("bounding box") }) {
-                Label("The floor wasn't fully captured — floor and ceiling areas are estimated. Point the camera at the floor during the next scan.", systemImage: "exclamationmark.triangle")
-                    .font(.footnote)
-                    .foregroundStyle(.orange)
+
+            if let confidence = session.confidence {
+                Divider().padding(.vertical, 2)
+                ConfidenceCard(report: confidence)
+            } else {
+                // Legacy fallback for visits stored before the confidence engine.
+                LabeledRow("Measurements", value: m.confidenceScore >= 0.6 ? "Good" : "Check the room")
+                if m.notes.contains(where: { $0.contains("bounding box") }) {
+                    Label("The floor wasn't fully captured — floor and ceiling areas are estimated. Point the camera at the floor during the next scan.", systemImage: "exclamationmark.triangle")
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                }
+                if m.notes.contains(where: { $0.contains("uncaptured walls") }) {
+                    Label("Some walls weren't captured in the scan — their area has been estimated from the room's shape. Verify the wall measurement, or rescan walking the full perimeter with every wall in view.", systemImage: "exclamationmark.triangle")
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                }
             }
-            if m.notes.contains(where: { $0.contains("uncaptured walls") }) {
-                Label("Some walls weren't captured in the scan — their area has been estimated from the room's shape. Verify the wall measurement, or rescan walking the full perimeter with every wall in view.", systemImage: "exclamationmark.triangle")
-                    .font(.footnote)
-                    .foregroundStyle(.orange)
+
+            // Live visit only: offer a rescan when the scan under-captured the
+            // room. The warning above stays visible; this adds the action.
+            if onRescan != nil && scanNeedsAttention {
+                Button { onRescan?() } label: {
+                    Label("Rescan Room", systemImage: "arrow.clockwise")
+                        .font(.body.weight(.medium))
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.bordered)
+                .tint(.yellow)
+                .padding(.top, 2)
             }
         }
+    }
+
+    /// The scan under-captured the room (low confidence, or walls/floor were
+    /// estimated) — the painter should be offered a rescan.
+    private var scanNeedsAttention: Bool {
+        guard let m = session.measurements else { return false }
+        if let c = session.confidence { return c.band != "high" }
+        return m.confidenceScore < 0.6
+            || m.notes.contains { $0.contains("uncaptured walls") || $0.contains("bounding box") }
     }
 
     @ViewBuilder
@@ -478,31 +589,69 @@ struct EstimateView: View {
             .padding(.top, 4)
     }
 
+    /// A plan is confirmed once the painter taps Confirm (persisted), or in this
+    /// session. "modified" (edited after confirming) still reads as confirmed.
+    private var isConfirmed: Bool {
+        let s = record?.planState
+        return s == "confirmed" || s == "modified" || accepted
+    }
+
+    /// Shown when a plan edit made the generated PDF out of date.
+    private var stalePdfBanner: some View {
+        VStack(spacing: 6) {
+            Label("Plan updated — the quote PDF is out of date.", systemImage: "exclamationmark.triangle.fill")
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(.orange)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button {
+                renderQuote()
+                history.clearStale(pdf: true, for: session.sessionId)
+            } label: {
+                Label("Regenerate Quote PDF", systemImage: "arrow.clockwise")
+                    .font(.body.weight(.medium))
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(.bordered)
+            .tint(.orange)
+        }
+        .padding(10)
+        .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
     private var shareBar: some View {
         VStack(spacing: 10) {
-            if onMakeChanges != nil {
+            if record?.pdfStale == true { stalePdfBanner }
+            if onEditPlan != nil {
                 HStack(spacing: 10) {
                     Button {
+                        history.setPlanState("confirmed", for: session.sessionId)
                         withAnimation { accepted = true }
                     } label: {
-                        Label(accepted ? "Accepted" : "Looks Great",
-                              systemImage: accepted ? "checkmark.circle.fill" : "hand.thumbsup.fill")
+                        Label(isConfirmed ? "Plan Confirmed" : "Confirm Plan",
+                              systemImage: isConfirmed ? "checkmark.circle.fill" : "checkmark.circle")
                             .font(.body.weight(.semibold))
                             .frame(maxWidth: .infinity, minHeight: 46)
                     }
                     .buttonStyle(.bordered)
                     .tint(.green)
 
-                    Button {
-                        onMakeChanges?()
-                    } label: {
-                        Label("Make Changes", systemImage: "mic.fill")
+                    Button { showEditPlan = true } label: {
+                        Label("Edit Plan", systemImage: "slider.horizontal.3")
                             .font(.body.weight(.semibold))
                             .frame(maxWidth: .infinity, minHeight: 46)
                     }
                     .buttonStyle(.bordered)
                     .tint(.yellow)
                 }
+            }
+            if onMakeChanges != nil {
+                Button { onMakeChanges?() } label: {
+                    Label("Make Changes by Voice", systemImage: "mic.fill")
+                        .font(.body.weight(.medium))
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.bordered)
+                .tint(.yellow)
             }
             Button {
                 showShareOptions = true
@@ -519,6 +668,11 @@ struct EstimateView: View {
         .padding(.top, 8)
         .padding(.bottom, 4)
         .background(.bar)
+        .sheet(isPresented: $showEditPlan) {
+            EditPlanView(session: session) { payload, pdfStale, vizStale in
+                onEditPlan?(payload, pdfStale, vizStale)
+            }
+        }
         .confirmationDialog("Share Quote", isPresented: $showShareOptions, titleVisibility: .visible) {
             if quoteURL != nil {
                 Button("Preview Quote") { showPreview = true }
@@ -535,7 +689,6 @@ struct EstimateView: View {
             }
         }
         .sheet(isPresented: $showMail) {
-            let identity = BusinessIdentity.load()
             let email = MailComposer.quoteEmail(
                 customer: record?.customerName ?? visitName,
                 company: identity.companyName.isEmpty ? "Your painting team" : identity.companyName
@@ -558,15 +711,14 @@ struct EstimateView: View {
     }
 
     private var quoteText: String {
-        let identity = BusinessIdentity.load()
         var lines: [String] = []
         if !identity.companyName.isEmpty { lines.append(identity.companyName) }
         if !identity.contactLine.isEmpty { lines.append(identity.contactLine) }
         lines.append("Painting Estimate — \(visitName)")
         if let e = session.estimate {
-            lines.append("Suggested price (incl. VAT): \(Format.euro(e.suggestedQuotationEur))")
-            lines.append("Labour: \(Format.hours(e.labourHours)) · \(Format.euro(e.labourCostEur))")
-            lines.append("Materials: \(Format.euro(e.materialCostEur))")
+            lines.append("Suggested price (incl. VAT): \(Format.money(e.suggestedQuotationEur, currency: session.currencyCode))")
+            lines.append("Labour: \(Format.hours(e.labourHours)) · \(Format.money(e.labourCostEur, currency: session.currencyCode))")
+            lines.append("Materials: \(Format.money(e.materialCostEur, currency: session.currencyCode))")
             lines.append("Paint: \(Format.litres(e.paintQuantityLitres)) · Primer: \(Format.litres(e.primerQuantityLitres))")
         }
         if let r = session.requirements, !r.scopeOfWork.isEmpty {
@@ -580,7 +732,7 @@ struct EstimateView: View {
         quoteURL = QuotePDF.render(
             session: session,
             visitName: visitName,
-            identity: BusinessIdentity.load(),
+            identity: identity,
             record: record
         )
     }
@@ -661,6 +813,87 @@ private struct BulletList: View {
                     Text(item)
                 }
             }
+        }
+    }
+}
+
+/// Renders the backend's confidence report: a 0–100 score with an explainable
+/// breakdown. Signal-agnostic — it draws whatever signals and tips the backend
+/// sends, so new capture-quality signals appear here with no change.
+private struct ConfidenceCard: View {
+    let report: ConfidenceReport
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.footnote)
+                    .foregroundStyle(color)
+                    .frame(width: 22)
+                    .accessibilityHidden(true)
+                Text("Scan confidence")
+                Spacer()
+                Text("\(report.score)%")
+                    .font(.body.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(color)
+            }
+            ProgressView(value: Double(report.score), total: 100)
+                .tint(color)
+            Text(report.headline)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            if !report.tips.isEmpty {
+                ForEach(report.tips, id: \.self) { tip in
+                    Label(tip, systemImage: "arrow.up.forward.circle")
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                }
+            }
+
+            if !report.signals.isEmpty {
+                DisclosureGroup {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(report.signals) { signal in
+                            HStack(alignment: .top, spacing: 8) {
+                                Text("\(Int((signal.score * 100).rounded()))%")
+                                    .font(.caption.monospacedDigit().weight(.medium))
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 40, alignment: .trailing)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(signal.label).font(.footnote.weight(.medium))
+                                    Text(signal.detail)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    }
+                    .padding(.top, 6)
+                } label: {
+                    Text("What we checked")
+                        .font(.footnote.weight(.medium))
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private var color: Color {
+        switch report.band {
+        case "high": return .green
+        case "medium": return .yellow
+        default: return .orange
+        }
+    }
+
+    private var icon: String {
+        switch report.band {
+        case "high": return "checkmark.seal.fill"
+        case "medium": return "checkmark.circle"
+        default: return "exclamationmark.triangle.fill"
         }
     }
 }

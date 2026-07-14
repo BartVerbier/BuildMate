@@ -359,6 +359,7 @@ class RoomPlanMeasurementEngine:
         # Floor: prefer the scanned floor polygon, fall back to dimensions,
         # then to the wall footprint.
         floor_area = sum(_polygon_area_m2(f.get("polygonCorners") or []) for f in floors)
+        floor_from_scan = True
         if floor_area >= MIN_PLAUSIBLE_FLOOR_M2:
             notes.append("Floor area from scanned floor polygon")
         else:
@@ -367,6 +368,7 @@ class RoomPlanMeasurementEngine:
                 notes.append("Floor area from floor surface dimensions (no usable polygon)")
             else:
                 floor_area = _wall_footprint_bbox_area_m2(walls)
+                floor_from_scan = False
                 notes.append(
                     "Floor area estimated from wall footprint bounding box "
                     "(no floor surface in scan); may over-estimate non-rectangular rooms"
@@ -407,4 +409,13 @@ class RoomPlanMeasurementEngine:
             movable_objects=movable_count,
             walls=_wall_details(walls, doors + windows + openings, per_wall_fixed),
             notes=notes,
+            # Structured capture-quality signals for the confidence engine.
+            # perimeter ratio: how much of the room's perimeter was actually
+            # captured (None when there's no floor perimeter to compare to).
+            wall_perimeter_ratio=(
+                round(min(wall_width_total / perimeter, 1.0), 3)
+                if perimeter > 0
+                else None
+            ),
+            floor_captured=floor_from_scan,
         )

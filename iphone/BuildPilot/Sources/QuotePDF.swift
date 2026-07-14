@@ -145,6 +145,9 @@ private struct SummaryPage: View {
     let record: VisitRecord?
 
     private var estimate: EstimateDraft? { session.estimate }
+    private func money(_ v: Double, rounded: Bool = false) -> String {
+        Format.money(v, currency: session.currencyCode, rounded: rounded)
+    }
 
     /// Deterministic quote number derived from the visit id
     /// (visit-YYYYMMDD-HHMMSS-hex → Q-YYYYMMDD-HEX).
@@ -165,6 +168,18 @@ private struct SummaryPage: View {
                     }
                     if !identity.contactLine.isEmpty {
                         Text(identity.contactLine)
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                    }
+                    if !identity.address.isEmpty {
+                        Text(identity.address)
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                    }
+                    let idLine = [identity.website, identity.vatNumber.isEmpty ? "" : "VAT \(identity.vatNumber)"]
+                        .filter { !$0.isEmpty }.joined(separator: " · ")
+                    if !idLine.isEmpty {
+                        Text(idLine)
                             .font(.system(size: 10))
                             .foregroundStyle(.secondary)
                     }
@@ -237,19 +252,19 @@ private struct SummaryPage: View {
                     Line("Ceiling area", ceilingValue(m))
                 }
                 Line("Estimated paint required", paintValue(e))
-                Line("Labour (\(Format.hours(e.labourHours)))", Format.euro(e.labourCostEur))
-                Line("Materials", Format.euro(e.materialCostEur))
+                Line("Labour (\(Format.hours(e.labourHours)))", money(e.labourCostEur))
+                Line("Materials", money(e.materialCostEur))
                 Line("Preparation & protection", preparationValue)
                 if let rate = session.companyProfile?.vatRate, rate > 0 {
                     let vat = e.suggestedQuotationEur - e.suggestedQuotationEur / (1 + rate)
-                    Line("VAT (\(Int((rate * 100).rounded())) %)", Format.euro(vat))
+                    Line("VAT (\(Int((rate * 100).rounded())) %)", money(vat))
                 }
                 HStack(alignment: .firstTextBaseline) {
                     Text("TOTAL (incl. VAT)")
                         .font(.system(size: 13, weight: .bold))
                         .kerning(0.4)
                     Spacer()
-                    Text(Format.euro(e.suggestedQuotationEur))
+                    Text(money(e.suggestedQuotationEur))
                         .font(.system(size: 26, weight: .bold, design: .rounded))
                 }
                 .padding(.horizontal, 12)
@@ -315,6 +330,10 @@ private struct DetailPage: View {
     let session: SessionResponse
     let identity: BusinessIdentity
 
+    private func money(_ v: Double) -> String {
+        Format.money(v, currency: session.currencyCode)
+    }
+
     var body: some View {
         PageChrome {
             Text("Scope of Work & Pricing")
@@ -365,18 +384,18 @@ private struct DetailPage: View {
 
             if let e = session.estimate {
                 SectionTitle("Pricing")
-                Line("Labour (\(Format.hours(e.labourHours)))", Format.euro(e.labourCostEur))
-                Line("Materials", Format.euro(e.materialCostEur))
+                Line("Labour (\(Format.hours(e.labourHours)))", money(e.labourCostEur))
+                Line("Materials", money(e.materialCostEur))
                 Line("Paint required", Format.litres(e.paintQuantityLitres))
                 Line("Primer required", Format.litres(e.primerQuantityLitres))
                 if let rate = session.companyProfile?.vatRate, rate > 0 {
                     let vat = e.suggestedQuotationEur - e.suggestedQuotationEur / (1 + rate)
-                    Line("VAT (\(Int((rate * 100).rounded())) %)", Format.euro(vat))
+                    Line("VAT (\(Int((rate * 100).rounded())) %)", money(vat))
                 }
                 HStack {
                     Text("Total (incl. VAT)").font(.system(size: 13, weight: .semibold))
                     Spacer()
-                    Text(Format.euro(e.suggestedQuotationEur))
+                    Text(money(e.suggestedQuotationEur))
                         .font(.system(size: 18, weight: .bold, design: .rounded))
                 }
                 .padding(.vertical, 5)

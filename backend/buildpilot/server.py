@@ -27,6 +27,7 @@ from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 
 from buildpilot.auth import auth_enabled, require_token
 from buildpilot.config import DEFAULT_COMPANY_PROFILE
+from buildpilot.identity import Contractor, ContractorResolver, current_contractor
 from buildpilot.pipeline import VisitPipeline
 from buildpilot.pipelines.estimator import DeterministicEstimator
 from buildpilot.pipelines.extraction import ClaudeRequirementsExtractor
@@ -40,6 +41,39 @@ MAX_AUDIO_BYTES = 500 * 1024 * 1024
 MAX_PHOTO_BYTES = 30 * 1024 * 1024
 MAX_POSES_BYTES = 10 * 1024 * 1024
 PHOTO_TIMES_FILE = "photo-times.json"
+
+
+def backend_version() -> dict:
+    """Identifies exactly which code this backend is running, so the phone and
+    a curl can confirm they match a specific commit.
+
+    On Railway the deployed commit is injected as RAILWAY_GIT_COMMIT_SHA. Locally
+    we read it from git and flag a dirty (uncommitted) tree — a dirty backend
+    matches no commit and no other machine, which is itself the answer.
+    """
+    sha = os.environ.get("RAILWAY_GIT_COMMIT_SHA") or os.environ.get("SOURCE_COMMIT")
+    if sha:
+        return {"commit": sha[:12], "source": "railway"}
+    try:
+        import subprocess
+
+        root = Path(__file__).resolve().parents[2]
+        head = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--short=12", "HEAD"],
+            capture_output=True, text=True, timeout=2,
+        )
+        if head.returncode == 0:
+            commit = head.stdout.strip()
+            dirty = subprocess.run(
+                ["git", "-C", str(root), "status", "--porcelain"],
+                capture_output=True, text=True, timeout=2,
+            )
+            if dirty.stdout.strip():
+                commit += "-dirty"
+            return {"commit": commit, "source": "git"}
+    except Exception:
+        pass
+    return {"commit": "unknown", "source": "none"}
 
 
 def _estimate_deltas(old, new) -> list:
@@ -96,6 +130,10 @@ def create_app(
     app.state.pipeline = pipeline or default_pipeline()
     app.state.store = store or default_store()
     app.state.visualizer = visualizer or GeminiVisualizer()
+    # The multi-tenant seam: resolves which contractor owns each request. The
+    # default is single-tenant; a deployment swaps in a credential-deriving
+    # resolver without touching the routes below.
+    app.state.contractor_resolver = ContractorResolver()
 
     @app.get("/health")
     def health() -> dict:
@@ -103,12 +141,19 @@ def create_app(
 
         return {
             "status": "ok",
+            "version": backend_version(),
             "authentication": "enabled" if auth_enabled() else "disabled",
             "transcriber_available": (
                 MlxWhisperTranscriber.is_available()
                 or FasterWhisperTranscriber.is_available()
             ),
             "extractor_credentials_hint": ClaudeRequirementsExtractor.is_available(),
+            # Whether the "proposed result" / "after" render is available. The
+            # phone reads this to explain a missing visualization instead of
+            # showing a silently-empty preview.
+            "visualizer_available": bool(
+                getattr(app.state.visualizer, "is_available", lambda: False)()
+            ),
         }
 
     @app.post("/sessions")
@@ -116,6 +161,7 @@ def create_app(
         room_scan: UploadFile = File(...),
         audio: Optional[UploadFile] = File(None),
         poses: Optional[UploadFile] = File(None),
+        contractor: Contractor = Depends(current_contractor),
     ) -> dict:
         room_bytes = await room_scan.read()
         if len(room_bytes) > MAX_ROOM_SCAN_BYTES:
@@ -145,7 +191,9 @@ def create_app(
                 except (ValueError, UnicodeDecodeError):
                     pass
 
-        session = app.state.store.create_session(room_bytes, audio_bytes)
+        session = app.state.store.create_session(
+            room_bytes, audio_bytes, contractor_id=contractor.contractor_id
+        )
         if poses_list is not None:
             app.state.store.write_artifact(
                 session, POSES_FILE, json.dumps(poses_list)
@@ -154,16 +202,25 @@ def create_app(
         return session.model_dump(mode="json")
 
     @app.get("/sessions")
-    def list_sessions() -> list:
-        return [s.model_dump(mode="json") for s in app.state.store.list_sessions()]
+    def list_sessions(
+        contractor: Contractor = Depends(current_contractor),
+    ) -> list:
+        return [
+            s.model_dump(mode="json")
+            for s in app.state.store.list_sessions(contractor.contractor_id)
+        ]
 
     @app.get("/sessions/{session_id}")
-    def get_session(session_id: str) -> dict:
-        return _load_or_404(session_id).model_dump(mode="json")
+    def get_session(
+        session_id: str, contractor: Contractor = Depends(current_contractor)
+    ) -> dict:
+        return _load_or_404(session_id, contractor.contractor_id).model_dump(mode="json")
 
     @app.get("/sessions/{session_id}/room")
-    def get_room_scan(session_id: str) -> dict:
-        session = _load_or_404(session_id)
+    def get_room_scan(
+        session_id: str, contractor: Contractor = Depends(current_contractor)
+    ) -> dict:
+        session = _load_or_404(session_id, contractor.contractor_id)
         try:
             return app.state.store.load_room_scan(session)
         except FileNotFoundError:
@@ -175,12 +232,13 @@ def create_app(
         photo: UploadFile = File(...),
         kind: str = Form("before"),
         t: Optional[float] = Form(None),
+        contractor: Contractor = Depends(current_contractor),
     ) -> dict:
         """Archives a visit photo (before/progress/after) into the session
         directory — part of the permanent project record. `t` is the frame's
         capture time on the visit clock (seconds since the audio recording
         started); it links the photo to a camera pose for reference selection."""
-        session = _load_or_404(session_id)
+        session = _load_or_404(session_id, contractor.contractor_id)
         if kind not in ("before", "progress", "after"):
             raise HTTPException(400, "kind must be before, progress, or after")
         data = await photo.read()
@@ -207,7 +265,11 @@ def create_app(
         return {"stored": f"photos/{file_name}"}
 
     @app.post("/sessions/{session_id}/revise")
-    async def revise(session_id: str, audio: UploadFile = File(...)) -> dict:
+    async def revise(
+        session_id: str,
+        audio: UploadFile = File(...),
+        contractor: Contractor = Depends(current_contractor),
+    ) -> dict:
         """Customer revision: merge spoken changes into the existing quote.
 
         Pipeline composition (no new stages): transcribe the change request →
@@ -218,7 +280,7 @@ def create_app(
         from buildpilot.pipelines.extraction import ExtractionError
         from buildpilot.pipelines.transcription import TranscriptionError
 
-        session = _load_or_404(session_id)
+        session = _load_or_404(session_id, contractor.contractor_id)
         if session.requirements is None or session.measurements is None or session.estimate is None:
             raise HTTPException(409, "Session has no completed quote to revise")
 
@@ -287,20 +349,26 @@ def create_app(
         }
 
     @app.get("/sessions/{session_id}/versions")
-    def list_versions(session_id: str) -> list:
-        session = _load_or_404(session_id)
+    def list_versions(
+        session_id: str, contractor: Contractor = Depends(current_contractor)
+    ) -> list:
+        session = _load_or_404(session_id, contractor.contractor_id)
         versions_dir = app.state.store.session_dir(session.session_id) / "versions"
         if not versions_dir.exists():
             return []
         return sorted(int(p.stem[1:]) for p in versions_dir.glob("v*.json"))
 
     @app.post("/sessions/{session_id}/versions/{version}/restore")
-    def restore_version(session_id: str, version: int) -> dict:
+    def restore_version(
+        session_id: str,
+        version: int,
+        contractor: Contractor = Depends(current_contractor),
+    ) -> dict:
         """Restores an earlier quote version (the current state is versioned
         first, so restore is itself reversible)."""
         from buildpilot.models.session import Session as SessionModel
 
-        session = _load_or_404(session_id)
+        session = _load_or_404(session_id, contractor.contractor_id)
         store: SessionStore = app.state.store
         versions_dir = store.session_dir(session.session_id) / "versions"
         target = versions_dir / f"v{version:02d}.json"
@@ -316,7 +384,11 @@ def create_app(
         return restored.model_dump(mode="json")
 
     @app.post("/sessions/{session_id}/visualize")
-    def visualize(session_id: str, stage: str = "finished") -> Response:
+    def visualize(
+        session_id: str,
+        stage: str = "finished",
+        contractor: Contractor = Depends(current_contractor),
+    ) -> Response:
         """Renders an AI stage image from the newest archived Before photo +
         the extracted requirements. Returns image/jpeg.
 
@@ -325,7 +397,7 @@ def create_app(
         """
         if stage not in ("finished", "preparation"):
             raise HTTPException(400, "stage must be 'finished' or 'preparation'")
-        session = _load_or_404(session_id)
+        session = _load_or_404(session_id, contractor.contractor_id)
         if session.requirements is None:
             raise HTTPException(409, "Session has no extracted requirements yet")
         # Agreement rule: the visualization must always match the estimate.
@@ -356,8 +428,10 @@ def create_app(
         return Response(content=image, media_type="image/jpeg")
 
     @app.get("/sessions/{session_id}/transcript", response_class=PlainTextResponse)
-    def get_transcript(session_id: str) -> str:
-        session = _load_or_404(session_id)
+    def get_transcript(
+        session_id: str, contractor: Contractor = Depends(current_contractor)
+    ) -> str:
+        session = _load_or_404(session_id, contractor.contractor_id)
         path = app.state.store.session_dir(session.session_id) / "transcript.txt"
         if not path.exists():
             raise HTTPException(404, "No transcript for this session")
@@ -405,9 +479,12 @@ def create_app(
         )
         return photos_dir / best
 
-    def _load_or_404(session_id: str):
+    def _load_or_404(session_id: str, contractor_id: Optional[str] = None):
+        # Ownership is enforced in the store: a session owned by a different
+        # contractor loads as None here, so it is indistinguishable from
+        # "not found" — a contractor can't even probe for another's ids.
         try:
-            session = app.state.store.load(session_id)
+            session = app.state.store.load(session_id, contractor_id)
         except ValueError:
             raise HTTPException(400, "Invalid session id")
         if session is None:

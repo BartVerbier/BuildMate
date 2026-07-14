@@ -337,6 +337,80 @@ as local, differing only by environment:
   the dev branch. The Mac stays the source of truth; the phone falls back to
   Railway only when no local backend is found.
 
+## Decision 29: Pre-TestFlight sequencing — harden, one flagship, then ship (2026-07-12)
+
+Founder decision while Apple Developer activation is pending. The runway is
+spent making the existing product dependable and professional, not widening
+its surface with speculative features:
+
+- **Order:** M1 (reliability + the missing After-in-PDF fix + a confidence
+  score) → M2 (design-system pass) → **one flagship: manual measurement
+  editing** (scanning is never perfect) → first TestFlight to the initial
+  external tester → then the remaining feature sprints, reordered by what real
+  visits expose. Sprints 3–7 are explicitly NOT built ahead of real usage.
+- **Project data must survive an app reinstall and sync across devices.** This
+  makes per-contractor identity and a backend read-back/list a real
+  requirement (see Decision 30), not a "later" — even though the full sync
+  feature lands after the flagship.
+
+## Decision 30: Per-contractor identity foundation (2026-07-12)
+
+Every project belongs to exactly one contractor, modelled from the start so
+multi-tenant project sync (Decision 29) drops in without reshaping data:
+
+- `Session.contractor_id` (backfilled to `DEFAULT_CONTRACTOR_ID = "default"`
+  for existing/local sessions). `SessionStore` create/load/list are
+  contractor-aware and **enforce ownership** — another contractor's session
+  reads as 404.
+- `identity.ContractorResolver` is the seam: today it reads an
+  `X-Contractor-Id` header (a routing signal, single-tenant, safe because
+  there's nothing to protect between tenants yet); a credential-deriving
+  subclass makes it a real security boundary later, changing only that one
+  class. This is deliberately separate from `auth.py` (authN) — identity
+  answers "whose data is it?".
+- The phone carries its identity in `ContractorIdentity` (id + token) read from
+  build config, and sends the header on every authorised request. The shared
+  API token moved out of source into a gitignored `Secrets.xcconfig`
+  (injected into the Info.plist at build; template `Secrets.example.xcconfig`).
+  Verified (`git log -S`, `git grep` across all commits) that the token was
+  never committed — it existed only in the uncommitted working tree and is now
+  in gitignored config, so there is no git-history exposure to remediate.
+
+## Decision 31: Deterministic, extensible confidence engine (2026-07-12)
+
+The "quote confidence score" (0–100) is deterministic and never AI, like the
+estimate. `pipelines/confidence.py` blends independent **signal providers**;
+each emits a normalised 0–1 quality with a weight, a reason, and an improvement
+tip, or abstains when it has no data (weights renormalise over present
+signals). Today's providers use only signals that genuinely exist — geometry
+confidence, wall/perimeter completeness, floor coverage. Named future signals
+(lighting, device motion, furniture occlusion, manual-edit count) register as
+new providers with no change to the engine, the `ConfidenceReport` contract, or
+the UI, which render signals generically. Band thresholds live in one place,
+retiring the `0.6` magic number that was duplicated across the estimator and
+the app.
+
+## Decision 32: Secret management is standardised and final (2026-07-12)
+
+Every secret lives in exactly one place per environment, never in source:
+backend local → `backend/.env`; backend production → Railway variables; iOS →
+`iphone/BuildPilot/Secrets.xcconfig`. Templates with placeholders are committed
+(`backend/.env.example`, `Secrets.example.xcconfig`); real files are gitignored
+(verified no secret is in source or git history). [SECRETS.md](../SECRETS.md) is
+the single reference. Do not move/reorganise/rotate secrets again unless a new
+secret is introduced, one is genuinely exposed, or a security change is asked
+for. Adding a new secret follows SECRETS.md and is not a "reorganisation".
+
+## Decision 33: M2 design system — codify now, elevate later (2026-07-12)
+
+Founder decision. M2 unifies the *existing* dark/yellow visual language into a
+shared design system (`Sources/DesignSystem.swift`: spacing, radius, colour
+tokens + reusable components) and adds the missing polish (empty states,
+success messages, confirmation dialogs, transitions) — ship-ready for
+TestFlight. A visual *refresh* (new colour/type language, premium restyle) is
+explicitly deferred to a separate milestone after the manual-editing flagship,
+once real usage has informed it. Not a visual overhaul now.
+
 ## Rationale
 
 These decisions are intended to reduce complexity and increase the likelihood of building a working prototype quickly. The core value proposition is not the scanning technology itself, but the automation of the site visit and the generation of a useful draft estimate.

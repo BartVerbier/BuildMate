@@ -15,6 +15,16 @@ struct VisitRecord: Codable, Identifiable {
     var customerAddress: String?
     var customerPhone: String?
     var customerEmail: String?
+    // Workflow state (Edit Plan). nil = draft/unconfirmed. Optional so records
+    // saved by earlier builds still decode.
+    var planState: String?              // "confirmed" | "modified"
+    var pdfStale: Bool?                 // a shared/generated PDF no longer matches
+    var visualizationStale: Bool?       // renders no longer match the plan
+    // The business identity frozen at creation. The visit's PDF renders from
+    // this, so editing global settings later never rewrites an old quote.
+    // Optional so records saved by earlier builds still decode (they fall back
+    // to the live identity, matching prior behaviour).
+    var businessSnapshot: BusinessSnapshot?
 }
 
 @MainActor
@@ -24,13 +34,15 @@ final class VisitHistoryStore: ObservableObject {
     private static let maxRecords = 20
     private let fileURL: URL
 
-    init() {
-        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        fileURL = documents.appendingPathComponent("visit-history.json")
+    init(fileURL: URL? = nil) {
+        self.fileURL = fileURL ?? FileManager.default
+            .urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("visit-history.json")
         load()
     }
 
-    func add(name: String, session: SessionResponse, customer: CustomerInfo? = nil) {
+    func add(name: String, session: SessionResponse, customer: CustomerInfo? = nil,
+             business: BusinessSnapshot? = nil) {
         // Updating an existing visit (e.g. a customer revision) must never
         // lose what's already attached to it — photos and contact details
         // carry over; only the session content is replaced.
@@ -44,6 +56,12 @@ final class VisitHistoryStore: ObservableObject {
         record.customerAddress = existing?.customerAddress
         record.customerPhone = existing?.customerPhone
         record.customerEmail = existing?.customerEmail
+        record.planState = existing?.planState
+        record.pdfStale = existing?.pdfStale
+        record.visualizationStale = existing?.visualizationStale
+        // Freeze the business identity once, at creation; every later in-place
+        // edit keeps the original snapshot so the quote never silently restyles.
+        record.businessSnapshot = existing?.businessSnapshot ?? business
         if let customer {
             record.customerName = customer.name.isEmpty ? record.customerName : customer.name
             record.customerAddress = customer.address.isEmpty ? record.customerAddress : customer.address
@@ -61,6 +79,13 @@ final class VisitHistoryStore: ObservableObject {
         save()
     }
 
+    /// Removes a visit by id — used when a rescan replaces the current visit's
+    /// estimate in place rather than leaving a duplicate entry.
+    func remove(id: String) {
+        records.removeAll { $0.id == id }
+        save()
+    }
+
     func record(for visitID: String) -> VisitRecord? {
         records.first { $0.id == visitID }
     }
@@ -75,6 +100,32 @@ final class VisitHistoryStore: ObservableObject {
         guard let index = records.firstIndex(where: { $0.id == visitID }) else { return }
         records[index].customerName = name.isEmpty ? nil : name
         records[index].customerAddress = address.isEmpty ? nil : address
+        save()
+    }
+
+    func setPlanState(_ state: String, for visitID: String) {
+        guard let index = records.firstIndex(where: { $0.id == visitID }) else { return }
+        records[index].planState = state
+        save()
+    }
+
+    /// After a saved edit: flag stale outputs and, if the plan was confirmed,
+    /// move it to "modified". `pdf`/`visualization` are set independently so a
+    /// notes-only edit can mark the PDF without invalidating renders.
+    func markStale(pdf: Bool, visualization: Bool, for visitID: String) {
+        guard let index = records.firstIndex(where: { $0.id == visitID }) else { return }
+        if pdf { records[index].pdfStale = true }
+        if visualization { records[index].visualizationStale = true }
+        if records[index].planState == "confirmed" {
+            records[index].planState = "modified"
+        }
+        save()
+    }
+
+    func clearStale(pdf: Bool = false, visualization: Bool = false, for visitID: String) {
+        guard let index = records.firstIndex(where: { $0.id == visitID }) else { return }
+        if pdf { records[index].pdfStale = false }
+        if visualization { records[index].visualizationStale = false }
         save()
     }
 

@@ -9,12 +9,22 @@ targets:
     type: application
     platform: iOS
     sources: [Sources, Assets.xcassets]
+    # Secrets (API token, contractor id) come from a gitignored xcconfig so
+    # they never enter source control. Copy Secrets.example.xcconfig to
+    # Secrets.xcconfig and fill in the values before building.
+    configFiles:
+      Debug: Secrets.xcconfig
+      Release: Secrets.xcconfig
     info:
       path: Info.plist
       properties:
         UILaunchScreen:
           UIColorName: LaunchBackground
         CFBundleDisplayName: BuildMate
+        # Per-contractor identity + backend token, injected from build settings
+        # (Secrets.xcconfig, gitignored). Read at runtime via ContractorIdentity.
+        BuildMateContractorId: $(BUILDMATE_CONTRACTOR_ID)
+        BuildMateAPIToken: $(BUILDMATE_API_TOKEN)
         # HTTPS/TLS only (standard, exempt encryption) — declaring this lets
         # every TestFlight build skip the export-compliance question.
         ITSAppUsesNonExemptEncryption: false
@@ -34,3 +44,13 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         DEVELOPMENT_TEAM: CGMLMB4ZRD  # personal team — survives xcodegen regeneration
         CODE_SIGN_STYLE: Automatic
+  BuildPilotTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [Tests]
+    dependencies:
+      - target: BuildPilot
+    settings:
+      base:
+        SWIFT_VERSION: "5.9"
+        GENERATE_INFOPLIST_FILE: true

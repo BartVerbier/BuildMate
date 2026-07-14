@@ -33,11 +33,11 @@ enum ConversationSummary {
     }
 
     private static func naturalList(_ items: [String]) -> String {
+        guard let last = items.last else { return "" }
         switch items.count {
-        case 0: return ""
-        case 1: return items[0]
-        case 2: return "\(items[0]) and \(items[1])"
-        default: return items.dropLast().joined(separator: ", ") + " and \(items.last!)"
+        case 1: return last
+        case 2: return "\(items[0]) and \(last)"
+        default: return items.dropLast().joined(separator: ", ") + " and \(last)"
         }
     }
 
