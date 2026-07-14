@@ -30,18 +30,24 @@ class VisualizationError(RuntimeError):
     """Raised when the render cannot run; callers degrade gracefully."""
 
 
-# The customer must see the WHOLE work area, not a zoomed-in detail, and it
-# must read as professional architectural photography (Sprint 6, items 2+7).
+# Fidelity over polish: the customer must recognise their OWN room. Earlier
+# wording ("complete walls floor to ceiling", "professional architectural
+# photography", "wide") invited the model to reframe and invent a different
+# room. This enforces a strict in-place edit of the uploaded source photo.
 _FRAMING_RULES = (
-    "FRAMING: Reproduce the source photograph's full field of view — show the "
-    "complete walls from floor to ceiling exactly as framed in the source. "
-    "Never zoom in, never crop tighter than the source image, never change "
-    "the aspect ratio. Vertical lines — wall corners, door frames, window "
-    "frames — must be perfectly straight and plumb, and the true proportions "
-    "of the room must be preserved. The result must look like professional "
-    "architectural photography: wide, level, perspective-correct, with clean, "
-    "even, natural lighting consistent with the original photo. "
-    "Photorealistic only, no artistic reinterpretation."
+    "IN-PLACE EDIT: Treat this strictly as an in-place edit of the uploaded "
+    "source photograph. The output must be the SAME photo, with only the "
+    "requested wall surfaces changed. Keep the identical framing, field of "
+    "view, crop, camera position, angle, and perspective as the source. Do "
+    "NOT reframe, re-crop, zoom in or out, pan, widen, straighten, or extend "
+    "the image, and do NOT generate any wall, area, or object that is not "
+    "already visible in the source. Preserve every existing element exactly as "
+    "in the source: wall geometry and edges, ceiling, floor, windows, doors, "
+    "furniture, fixtures and all visible objects, together with the original "
+    "lighting, shadows, reflections and colour balance. Do NOT invent a "
+    "different room, a different house, a new wall or window layout, or a "
+    "staged architectural-photography composition. Photorealistic only, no "
+    "reinterpretation — the customer must recognise their own room."
 )
 
 _SAME_ROOM_RULES = (
