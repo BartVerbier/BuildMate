@@ -82,6 +82,10 @@ class RoomMeasurement(BaseModel):
     # the walls actually being painted. Empty for sessions from older scans.
     walls: List[WallDetail] = Field(default_factory=list)
     notes: List[str] = Field(default_factory=list)
+    # True when a human manually verified/corrected the measurements on site.
+    # Recorded SEPARATELY so the original RoomPlan confidence_score and notes
+    # (the scan-quality evidence) are never overwritten.
+    measurements_verified: bool = False
 
 
 class PaintScope(BaseModel):

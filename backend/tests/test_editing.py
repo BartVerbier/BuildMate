@@ -62,15 +62,15 @@ def test_unknown_painted_wall_ids_are_dropped():
     assert r.painted_wall_ids == ["w1"]  # w9 doesn't exist
 
 
-def test_manual_verification_clears_incomplete_scan_warnings():
+def test_manual_verification_records_flag_without_erasing_evidence():
     m, _, _ = apply_plan_edit(
         _measurements(), RequirementExtraction(), DEFAULT_COMPANY_PROFILE,
         PlanEdit(measurements_verified=True),
     )
-    assert m.confidence_score == 1.0
-    assert not any("uncaptured walls" in n for n in m.notes)
-    assert any("manually verified" in n.lower() for n in m.notes)
-    assert any("Floor area" in n for n in m.notes)  # unrelated note kept
+    assert m.measurements_verified is True
+    assert m.confidence_score == 0.55  # original scan confidence PRESERVED, not overwritten
+    assert any("uncaptured walls" in n for n in m.notes)  # scan-quality evidence kept
+    assert any("manually verified" in n.lower() for n in m.notes)  # verification recorded
 
 
 # --- endpoint -----------------------------------------------------------------
@@ -90,6 +90,19 @@ def test_reestimate_updates_in_place_and_versions(tmp_path):
     assert body["session"]["company_profile"]["coats"] == 4
     assert (store.session_dir(sid) / "versions" / "v01.json").exists()  # reversible
     assert body["changes"]  # deterministic price deltas returned
+
+
+def test_reestimate_verification_records_separately(tmp_path):
+    client, _ = make_client(tmp_path)
+    sid = upload(client).json()["session_id"]
+    conf_before = client.get(f"/sessions/{sid}").json()["measurements"]["confidence_score"]
+    body = client.post(
+        f"/sessions/{sid}/reestimate", json={"measurements_verified": True}
+    ).json()
+    m = body["session"]["measurements"]
+    assert m["measurements_verified"] is True
+    assert m["confidence_score"] == conf_before  # scan confidence preserved, not 1.0
+    assert body["session"]["raw_metadata"]["quote_readiness"] == "verified_manually"
 
 
 def test_reestimate_empty_edit_is_a_deterministic_noop(tmp_path):

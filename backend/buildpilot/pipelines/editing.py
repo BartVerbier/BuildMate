@@ -17,9 +17,6 @@ from buildpilot.models.session import (
     RoomMeasurement,
 )
 
-# Notes the scan added when it was incomplete; a manual verification clears them
-# because the human has now confirmed the geometry on site.
-_INCOMPLETE_SCAN_MARKERS = ("uncaptured walls", "bounding box")
 _VERIFIED_NOTE = "Measurements manually verified on site."
 
 
@@ -81,13 +78,12 @@ def apply_plan_edit(
     if edit.coats is not None:
         p.coats = max(int(edit.coats), 1)
 
-    # --- manual verification clears the incomplete-scan warnings -------------
+    # --- manual verification: recorded WITHOUT erasing scan-quality evidence.
+    # The original RoomPlan confidence_score and notes are preserved untouched;
+    # only a separate flag + note are added. Downstream (the app) suppresses the
+    # incomplete-scan warning based on this flag, but the evidence remains.
     if edit.measurements_verified:
-        m.confidence_score = 1.0
-        m.notes = [
-            n for n in m.notes
-            if not any(marker in n for marker in _INCOMPLETE_SCAN_MARKERS)
-        ]
+        m.measurements_verified = True
         if _VERIFIED_NOTE not in m.notes:
             m.notes.append(_VERIFIED_NOTE)
 

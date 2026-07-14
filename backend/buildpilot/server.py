@@ -331,6 +331,9 @@ def create_app(
         changes = _estimate_deltas(old, session.estimate)
         session.raw_metadata["version"] = str(version + 1)
         session.raw_metadata["plan_edited"] = "true"
+        if edit.measurements_verified:
+            # Separate from scan confidence: the human vouched for the numbers.
+            session.raw_metadata["quote_readiness"] = "verified_manually"
         session.updated_at = datetime.now(timezone.utc)
         store.save(session)
         store.write_artifact(
