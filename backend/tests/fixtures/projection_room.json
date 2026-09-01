@@ -1,0 +1,20 @@
+{
+  "_comment": "Stage 0 analytic scene: wall w1 is 2x2 m, centred 3 m in front of a camera at the origin, facing it head-on (+Z normal). A 0.6x0.6 m window sits on it. Projections are hand-computable for tests.",
+  "walls": [
+    {
+      "category": { "wall": {} },
+      "dimensions": [2.0, 2.0, 0.0],
+      "transform": [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0.0, 0.0, -3.0, 1]]
+    }
+  ],
+  "windows": [
+    {
+      "category": { "window": {} },
+      "dimensions": [0.6, 0.6, 0.0],
+      "transform": [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0.0, 0.3, -3.0, 1]]
+    }
+  ],
+  "doors": [],
+  "openings": [],
+  "floors": []
+}
