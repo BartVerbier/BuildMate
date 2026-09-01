@@ -179,7 +179,9 @@ function render(s, transcript, room) {
   document.getElementById("main").innerHTML = `
     <header class="session">
       <h2>${esc(s.session_id)}</h2>
-      <span class="meta">${new Date(s.created_at).toLocaleString()} · ${esc(s.status)}</span>
+      <span class="meta">${new Date(s.created_at).toLocaleString()} · ${esc(s.status)}${
+        s.raw_metadata && s.raw_metadata.client_recording_consent
+          ? ` · recording consent: ${s.raw_metadata.client_recording_consent === "true" ? "✓" : "✕ NOT CONFIRMED"}` : ""}</span>
     </header>
     <div class="grid">
       <div class="col">
@@ -191,13 +193,23 @@ function render(s, transcript, room) {
           <tr><td>Floor area</td><td class="num">${m.floor_area_m2.toFixed(1)} m²</td></tr>
           <tr><td>Doors + windows</td><td class="num">${(m.door_area_m2 + m.window_area_m2).toFixed(1)} m²</td></tr>
           <tr><td>Scan confidence</td><td class="num">${Math.round(m.confidence_score * 100)} %</td></tr>
-        </table></div>` : ""}
+          ${m.completeness ? `<tr><td>Completeness</td><td class="num">${
+            m.completeness.status === "complete"
+              ? '<span style="color:#2e7d32">complete</span>'
+              : `<span style="color:#c62828">incomplete · ${m.completeness.open_edges.length} gap(s)${m.completeness.human_confirmed ? " · verified on site" : ""}</span>`
+          }</td></tr>` : ""}
+        </table>
+        ${m.completeness && m.completeness.status !== "complete" && m.completeness.open_edges.length
+          ? `<div class="muted" style="font-size:12px;margin-top:6px">${
+              m.completeness.open_edges.map(g => esc(g.description)).join("<br>")}</div>` : ""}
+        </div>` : ""}
         <div class="card"><h3>Transcript</h3>${
           transcript ? `<pre class="transcript">${esc(transcript)}</pre>`
                      : '<div class="muted">No transcript (no audio, or transcription degraded).</div>'}</div>
       </div>
       <div class="col">
         ${e ? `<div class="card">
+          ${e.quotable === false ? `<div style="background:#fdecea;color:#c62828;border-radius:8px;padding:8px 10px;font-weight:600;font-size:12.5px;margin-bottom:8px">NOT QUOTABLE — ${esc(e.not_quotable_reason || "incomplete scan, measurements unverified")}</div>` : ""}
           <div class="hero-label">Draft quotation (incl. VAT)</div>
           <div class="hero">${eur(e.suggested_quotation_eur)}</div>
           <table style="margin-top:12px">
