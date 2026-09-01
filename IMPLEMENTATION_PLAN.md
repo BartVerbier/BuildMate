@@ -7,21 +7,50 @@ backend is deployed on Railway with bearer auth, Anthropic extraction, and
 Gemini/Vertex visualization, and the iPhone app has been verified against it
 over 5G. Backend suite: 110 tests + a gated real-Whisper integration test.
 
-**Pre-TestFlight sequencing (Decision 29, 2026-07-12):** while Apple Developer
-activation is pending, work is hardening-first, not feature-first:
+**Pre-TestFlight sequencing (Decision 29, 2026-07-12):** M1 (reliability,
+confidence engine, contractor identity, secret hygiene) ✅ complete; the
+manual measurement-editing flagship shipped as EditPlanView. The remainder of
+that sequencing is **superseded by the 2026-09-01 plan below.**
 
-- **M1 — Reliability + After-in-PDF fix + Confidence score — ✅ complete.**
-  Differentiated network/AI errors, surfaced-and-retryable renders, guaranteed
-  PDF re-render when the After lands, honest processing progress, a
-  deterministic extensible confidence engine (Decision 31), the per-contractor
-  identity foundation (Decision 30), and the API token moved out of source.
-  Backend green; iOS compiles clean against the iOS 26 SDK (device run pending).
-- **M2 — Design-system pass** — next.
-- **Flagship — Manual measurement editing** — before first TestFlight.
-- **Then** the remaining sprints (project management with reinstall-surviving,
-  multi-device sync; settings; quote redesign), reordered by real visits.
+## The 2026-09-01 plan — accuracy-first road to the App Store
 
-Work proceeds milestone by milestone with founder review at each hard stop.
+Founder-approved. Two fixed points: ground-truth measuring starts 2026-09-02
+(the founder lasers real rooms daily — docs/GROUND_TRUTH_PROTOCOL.md), and
+the end state is a professional-grade App Store release. Every milestone ends
+with a founder hard stop.
+
+**Foundation (night of 2026-09-01):** everything committed and pushed; CI on
+every push; scan-intake tool (`backend/tools/pull_scan.py`) bridging job
+sites to the corpus; ground-truth harness live (asserts a COMPLETE verdict is
+within tolerance AND an out-of-tolerance scan flagged itself); App Store
+version automation (`bump-build.sh`); estimator completeness gate built
+behind the corpus's evidence before deploying.
+
+- **A — Prove the engine** (gated on ~8 laser-measured rooms): accuracy
+  report per engine version; deploy Decision 34 + the completeness gate on
+  evidence; test an iOS 18 deployment target against the same rooms
+  (RoomPlan wall handling improved in iOS 18); set the internal tolerance.
+- **B — Guided per-wall capture:** promote the AR continuity spike into the
+  capture flow (wall checklist, closure detection, targeted rescans). Exit is
+  measured, not vibed: pattern-A field scans close the loop on most rooms and
+  every COMPLETE verdict sits inside the milestone-A tolerance.
+- **C — Protection time:** derived from the founder's 22 years of painting
+  (fixed/movable object counts already measured per scan), validated against
+  the painter_estimate recorded with every ground-truth room.
+- **D — Professional finish:** M2 design pass, real copy (lighting-gate
+  placeholders), onboarding, every error state. Then TestFlight (founder,
+  boss, Ariana).
+- **E — App Store structural work:** per-user auth replacing the baked-in
+  shared token (the ContractorResolver seam exists for this); in-app
+  recording-consent step (App Review + EU law); the Build Pilot/BuildMate
+  naming decision; privacy policy, nutrition labels, support page.
+- **F — Whole-wall before/after:** deliberately last — most expensive, least
+  certain, and the one milestone real usage may legitimately resize.
+  wall_projection.py (Stage 0) is the validated foundation.
+
+Standing discipline: engine changes land with a fixture proving them against
+laser truth; docs update in the same commit as architecture changes; push
+daily; the hard product invariants in CLAUDE.md stay inviolate.
 
 ## Architecture Summary
 

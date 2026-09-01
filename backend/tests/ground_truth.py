@@ -56,6 +56,10 @@ def load_records() -> List[Dict[str, Any]]:
         if path.name.startswith("EXAMPLE"):
             continue
         record = json.loads(path.read_text())
+        # A scaffold from tools/pull_scan.py has no laser data yet; it must
+        # not enter the corpus until the walls are filled in on site.
+        if not record.get("laser", {}).get("walls_m"):
+            continue
         scan = SCAN_DIR / f"{record['visit_id']}.json"
         if not scan.exists():
             continue
