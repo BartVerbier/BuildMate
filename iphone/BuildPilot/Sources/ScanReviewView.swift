@@ -24,6 +24,7 @@ struct ScanReviewView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: BPSpacing.l) {
                     header
+                    sketchCard
                     gapList
                     consequence
                 }
@@ -45,6 +46,21 @@ struct ScanReviewView: View {
         }
     }
 
+    /// The room as scanned, open ends ringed in red — the painter sees
+    /// where the holes are instead of decoding wall numbers.
+    private var sketchCard: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            RoomSketch(footprints: visit.scanReviewFootprints, openEnds: openEnds)
+                .frame(height: 190)
+                .frame(maxWidth: .infinity)
+                .background(Color(.secondarySystemGroupedBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            Text("Your scan from above — the red rings are where the walls don't meet.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+    }
+
     private var gapList: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Open ends")
@@ -56,10 +72,10 @@ struct ScanReviewView: View {
                     Image(systemName: "arrow.triangle.branch")
                         .foregroundStyle(.orange)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Wall \(gap.wallId.dropFirst()) — \(gap.end == .start ? "left" : "right") end open")
+                        Text("Wall \(gap.wallId.dropFirst()) has an open end")
                             .font(.body.weight(.medium))
                         if let gapM = gap.gapM, let nearest = gap.nearestWallId {
-                            Text("\(Format.metres(gapM)) from wall \(nearest.dropFirst())")
+                            Text("\(Format.metres(gapM)) of wall missing to wall \(nearest.dropFirst())")
                                 .font(.footnote)
                                 .foregroundStyle(.secondary)
                         }

@@ -7,6 +7,7 @@ The bridge between a job site and the accuracy harness
     python tools/pull_scan.py list             # today's visits, newest first
     python tools/pull_scan.py pull <visit-id>  # archive scan + scaffold truth
     python tools/pull_scan.py pull --latest    # ...the newest visit, no ID needed
+    python tools/pull_scan.py truth --latest   # guided laser-number entry (no JSON editing)
 
 `pull` writes the verbatim CapturedRoom JSON to
 tests/fixtures/real_scans/<visit-id>.json and scaffolds
@@ -149,6 +150,120 @@ def _latest_visit_id() -> str | None:
     return sessions[0].get("session_id") if sessions else None
 
 
+def _number(raw: str) -> float | None:
+    """Parse a number the way a European types it: '4,62' and '4.62' both
+    work; blank (or anything unparseable) is None — a missing value is
+    honest, a guessed one poisons the corpus."""
+    raw = raw.strip().replace(",", ".")
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        return None
+
+
+def _ask(prompt: str) -> str:
+    try:
+        return input(prompt)
+    except EOFError:
+        return ""
+
+
+def _ask_number(prompt: str) -> float | None:
+    return _number(_ask(prompt))
+
+
+def cmd_truth(visit_id: str) -> int:
+    """Guided entry of the on-site laser numbers (docs/GROUND_TRUTH_PROTOCOL.md).
+    Blank answers skip a field; nothing is ever guessed on your behalf."""
+    truth_path = TRUTH_DIR / f"{visit_id}.json"
+    scan_path = SCAN_DIR / f"{visit_id}.json"
+    if not scan_path.exists():
+        print(f"No archived scan for {visit_id} — run pull first.", file=sys.stderr)
+        return 1
+    record = (
+        json.loads(truth_path.read_text()) if truth_path.exists()
+        else _truth_scaffold(visit_id)
+    )
+
+    print(f"\nLaser numbers for {visit_id} — blank skips, ',' or '.' decimals both fine.\n")
+    pattern = _ask("Scan pattern [A natural / B deliberate / C obstructed]: ").strip().upper()
+    if pattern in ("A", "B", "C"):
+        record["scan_pattern"] = pattern
+    label = _ask("Room label (e.g. 'Living room, 1st floor'): ").strip()
+    if label:
+        record["room_label"] = label
+
+    print("\nWalls — corner to corner, one per line. Blank line when done.")
+    walls = []
+    while True:
+        value = _ask_number(f"  wall {len(walls) + 1} length (m): ")
+        if value is None:
+            break
+        walls.append({"label": f"wall {len(walls) + 1}", "length_m": value})
+    if walls:
+        record["laser"]["walls_m"] = walls
+
+    print("\nCeiling height at two opposite corners.")
+    heights = [h for h in (
+        _ask_number("  corner 1 (m): "), _ask_number("  corner 2 (m): ")
+    ) if h is not None]
+    if heights:
+        record["laser"]["ceiling_height_m"] = heights
+
+    print("\nDoors and windows — blank type when done.")
+    openings = []
+    while True:
+        kind = _ask("  type [d]oor / [w]indow / [o]pening: ").strip().lower()
+        if not kind:
+            break
+        kind = {"d": "door", "w": "window", "o": "opening"}.get(kind[0], kind)
+        width = _ask_number("    width (m): ")
+        height = _ask_number("    height (m): ")
+        if width and height:
+            openings.append({"type": kind, "wall": "", "width_m": width, "height_m": height})
+    if openings:
+        record["laser"]["openings"] = openings
+
+    print("\nBuilt-ins touching a wall (fitted wardrobes, kitchen units) — blank name when done.")
+    built_ins = []
+    while True:
+        what = _ask("  what is it: ").strip()
+        if not what:
+            break
+        width = _ask_number("    width (m): ")
+        height = _ask_number("    height (m): ")
+        if width and height:
+            built_ins.append({"what": what, "wall": "", "width_m": width, "height_m": height})
+    record["laser"]["built_ins"] = built_ins
+
+    print("\nYour own estimate — BEFORE looking at the app's number.")
+    estimate = record.setdefault("painter_estimate", {})
+    for key, prompt in [
+        ("paintable_area_m2", "  paintable area (m2): "),
+        ("prep_hours", "  prep hours: "),
+        ("protection_hours", "  protection/covering hours: "),
+        ("total_hours", "  total hours: "),
+        ("materials_eur", "  materials (EUR): "),
+        ("quoted_price_eur", "  the price you'd quote (EUR): "),
+    ]:
+        value = _ask_number(prompt)
+        if value is not None:
+            estimate[key] = value
+    comment = _ask("  anything unusual about this job: ").strip()
+    if comment:
+        estimate["comment"] = comment
+
+    truth_path.write_text(json.dumps(record, indent=2))
+    wall_total = sum(w["length_m"] for w in record["laser"].get("walls_m", []))
+    print(f"\nSaved {truth_path.name}: {len(record['laser'].get('walls_m', []))} walls "
+          f"({wall_total:.2f} m), {len(record['laser'].get('ceiling_height_m', []))} ceiling "
+          f"reading(s), {len(openings)} opening(s).")
+    print("Next:  ../.venv/bin/python tools/accuracy_report.py")
+    return 0
+
+
 def main() -> int:
     args = sys.argv[1:]
     if args[:1] == ["list"]:
@@ -162,6 +277,16 @@ def main() -> int:
         return cmd_pull(visit_id)
     if args[:1] == ["pull"] and len(args) == 2:
         return cmd_pull(args[1])
+    if args == ["truth", "--latest"]:
+        visit_id = _latest_visit_id()
+        if not visit_id:
+            print("No sessions on the backend.", file=sys.stderr)
+            return 1
+        if not (SCAN_DIR / f"{visit_id}.json").exists():
+            cmd_pull(visit_id)
+        return cmd_truth(visit_id)
+    if args[:1] == ["truth"] and len(args) == 2:
+        return cmd_truth(args[1])
     print(__doc__.strip(), file=sys.stderr)
     return 2
 

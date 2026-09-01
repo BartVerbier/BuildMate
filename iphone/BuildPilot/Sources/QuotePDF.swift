@@ -430,6 +430,11 @@ private struct DetailPage: View {
                         .font(.system(size: 18, weight: .bold, design: .rounded))
                 }
                 .padding(.vertical, 5)
+                if !e.isQuotable {
+                    Text("DRAFT — NOT FOR QUOTATION: prices only what was scanned; verify on site or rescan.")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.red)
+                }
                 Text("The total also covers travel and overheads.")
                     .font(.system(size: 9.5))
                     .foregroundStyle(.secondary)

@@ -108,6 +108,8 @@ final class VisitController: ObservableObject {
     /// only: the backend recomputes its own completeness verdict from the
     /// same verbatim scan JSON.
     private(set) var guidedCapture = GuidedCaptureFlow()
+    /// The scan's wall footprints, kept for the review screen's room sketch.
+    private(set) var scanReviewFootprints: [WallFootprint] = []
     /// The audio from the last completed capture, reused by a rescan so the
     /// painter never loses the conversation (unique temp file, not overwritten).
     private var lastAudioFile: URL?
@@ -209,7 +211,9 @@ final class VisitController: ObservableObject {
                     // Wall-loop gate: an open loop gets a review screen with
                     // the located gaps before anything is uploaded. Closed
                     // (or unassessable) proceeds exactly as before.
-                    let status = Self.wallLoopStatus(fromRoomJSON: roomJSON)
+                    let assessment = Self.wallLoopAssessment(fromRoomJSON: roomJSON)
+                    let status = assessment.status
+                    self.scanReviewFootprints = assessment.footprints
                     self.guidedCapture.scanEnded(status)
                     if case .open(let ends, let walls) = status {
                         visitLog.info("Wall loop open: \(ends.count) gap(s) across \(walls) wall(s) — showing scan review")
@@ -232,14 +236,17 @@ final class VisitController: ObservableObject {
     /// Decode the encoded CapturedRoom and assess the ground-plane wall loop.
     /// Falls back to .noWalls (no gate) when the JSON does not decode — the
     /// backend is the authority and will fail or flag the scan itself.
-    static func wallLoopStatus(fromRoomJSON data: Data) -> WallLoopStatus {
+    static func wallLoopAssessment(
+        fromRoomJSON data: Data
+    ) -> (status: WallLoopStatus, footprints: [WallFootprint]) {
         guard let room = try? JSONDecoder().decode(CapturedRoom.self, from: data) else {
-            return .noWalls
+            return (.noWalls, [])
         }
-        return WallLoop.assess(WallLoop.footprints(
+        let footprints = WallLoop.footprints(
             transforms: room.walls.map(\.transform),
             dimensions: room.walls.map(\.dimensions)
-        ))
+        )
+        return (WallLoop.assess(footprints), footprints)
     }
 
     /// Scan review: proceed with the open loop. The backend will measure it
