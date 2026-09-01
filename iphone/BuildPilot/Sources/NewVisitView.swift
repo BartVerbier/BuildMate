@@ -13,52 +13,79 @@ struct CustomerInfo: Equatable {
     }
 }
 
-/// The premium visit-start screen: who is this quote for, which trade,
-/// one big action. Required: customer name + property address.
+/// The visit-start sequence, three screens in order (VisitSetupFlow):
+/// 1. Customer details — no light-check activity at all.
+/// 2. Light check — the walk-through survey; the gate's ARSession starts
+///    here, on this screen's appearance, and not a moment earlier.
+/// 3. Light report — the walk's verdict; Start Visit lives here and is
+///    disabled while the worst reading is in the dark band.
 struct NewVisitView: View {
     let onStart: (CustomerInfo) -> Void
     let onCancel: () -> Void
 
     @State private var customer = CustomerInfo()
+    @State private var flow = VisitSetupFlow()
     @FocusState private var focusedField: Field?
+    @StateObject private var lightGate = LightingGateController()
 
     private enum Field { case name, address, phone, email }
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 28) {
-                    header
-
-                    VStack(spacing: 14) {
-                        field("Customer name", text: $customer.name,
-                              symbol: "person.fill", focus: .name,
-                              contentType: .name, required: true)
-                        field("Property address", text: $customer.address,
-                              symbol: "mappin.and.ellipse", focus: .address,
-                              contentType: .fullStreetAddress, required: true)
-                        field("Phone", text: $customer.phone,
-                              symbol: "phone.fill", focus: .phone,
-                              contentType: .telephoneNumber, keyboard: .phonePad)
-                        field("Email", text: $customer.email,
-                              symbol: "envelope.fill", focus: .email,
-                              contentType: .emailAddress, keyboard: .emailAddress)
-                    }
-
-                    tradeSelector
+            Group {
+                switch flow.step {
+                case .details: detailsScreen
+                case .lightCheck: lightCheckScreen
+                case .report: reportScreen
                 }
-                .padding(.horizontal, 24)
-                .padding(.top, 12)
             }
             .background(Color(.systemBackground))
-            .safeAreaInset(edge: .bottom) { startButton }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel", action: onCancel)
                 }
             }
-            .onAppear { focusedField = .name }
+            .onDisappear { lightGate.stop() }
+            .onChange(of: lightGate.status) { _, status in
+                // The survey's terminal states (Done Checking, or the
+                // fail-open unavailable paths) advance to the report.
+                switch status {
+                case .complete, .unavailable: flow.surveyEnded()
+                case .idle, .checking, .surveying: break
+                }
+            }
         }
+    }
+
+    // MARK: - 1. customer details (no light-check activity here)
+
+    private var detailsScreen: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 28) {
+                header
+
+                VStack(spacing: 14) {
+                    field("Customer name", text: $customer.name,
+                          symbol: "person.fill", focus: .name,
+                          contentType: .name, required: true)
+                    field("Property address", text: $customer.address,
+                          symbol: "mappin.and.ellipse", focus: .address,
+                          contentType: .fullStreetAddress, required: true)
+                    field("Phone", text: $customer.phone,
+                          symbol: "phone.fill", focus: .phone,
+                          contentType: .telephoneNumber, keyboard: .phonePad)
+                    field("Email", text: $customer.email,
+                          symbol: "envelope.fill", focus: .email,
+                          contentType: .emailAddress, keyboard: .emailAddress)
+                }
+
+                tradeSelector
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, 12)
+        }
+        .safeAreaInset(edge: .bottom) { nextButton }
+        .onAppear { focusedField = .name }
     }
 
     private var header: some View {
@@ -69,6 +96,25 @@ struct NewVisitView: View {
                 .font(.body)
                 .foregroundStyle(.secondary)
         }
+    }
+
+    private var nextButton: some View {
+        Button {
+            focusedField = nil
+            flow.advanceToLightCheck(customerValid: customer.isValid)
+        } label: {
+            Label("Next: Check the Light", systemImage: "lightbulb")
+                .font(.title3.weight(.bold))
+                .frame(maxWidth: .infinity, minHeight: 58)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(.yellow)
+        .foregroundStyle(.black)
+        .disabled(!customer.isValid)
+        .padding(.horizontal, 20)
+        .padding(.top, 8)
+        .padding(.bottom, 8)
+        .background(.bar)
     }
 
     private func field(
@@ -129,21 +175,197 @@ struct NewVisitView: View {
         }
     }
 
-    private var startButton: some View {
-        Button {
-            onStart(customer)
-        } label: {
-            Label("Start Visit", systemImage: "camera.metering.matrix")
-                .font(.title3.weight(.bold))
-                .frame(maxWidth: .infinity, minHeight: 58)
+    // MARK: - 2. the walk-through light check
+
+    private var lightCheckScreen: some View {
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Check the Light")
+                    .font(.system(.largeTitle, design: .rounded).bold())
+                Text(LightingGateCopy.walkInstruction)
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 24)
+            .padding(.top, 12)
+
+            Spacer()
+
+            // The live meter — walk the room, watch it move.
+            VStack(spacing: 14) {
+                switch lightGate.status {
+                case .checking:
+                    ProgressView().controlSize(.large)
+                    Text(LightingGateCopy.checking)
+                        .font(.title3.weight(.medium))
+                        .foregroundStyle(.secondary)
+                case .surveying(let worst):
+                    Image(systemName: worst == .dark ? "lightbulb.slash" : "lightbulb.fill")
+                        .font(.system(size: 44))
+                        .foregroundStyle(worst == .dark ? Color.orange : Color.yellow)
+                    Text(lightGate.liveReadout ?? LightingGateCopy.checking)
+                        .font(.title2.weight(.semibold).monospacedDigit())
+                    if let message = lightGate.status.message {
+                        // A dark spot — say so while they stand in it.
+                        Text(message)
+                            .font(.callout.weight(.medium))
+                            .foregroundStyle(.orange)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 32)
+                    }
+                default:
+                    EmptyView() // terminal states advance to the report
+                }
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Light survey in progress. Walk the room, then tap Done Checking.")
+
+            Spacer()
+
+            VStack(spacing: 10) {
+                Button {
+                    lightGate.finishSurvey()
+                } label: {
+                    Label(LightingGateCopy.doneChecking, systemImage: "checkmark")
+                        .font(.title3.weight(.bold))
+                        .frame(maxWidth: .infinity, minHeight: 58)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.yellow)
+                .foregroundStyle(.black)
+                .disabled(!lightGate.status.canFinish)
+
+                Button("Back to details") {
+                    lightGate.stop()
+                    flow.backToDetails()
+                }
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+                #if DEBUG
+                debugFootnote
+                #endif
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 12)
         }
-        .buttonStyle(.borderedProminent)
-        .tint(.yellow)
-        .foregroundStyle(.black)
-        .disabled(!customer.isValid)
-        .padding(.horizontal, 20)
-        .padding(.top, 8)
-        .padding(.bottom, 8)
-        .background(.bar)
+        .onAppear { lightGate.start() } // NOT earlier — details stay camera-free
     }
+
+    // MARK: - 3. the light report
+
+    private var reportScreen: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Light Report")
+                    .font(.system(.largeTitle, design: .rounded).bold())
+                Text("What the walk-through found.")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.top, 12)
+
+            reportContent
+
+            Spacer()
+
+            VStack(spacing: 10) {
+                Button {
+                    // Teardown BEFORE the RoomPlan capture starts — the
+                    // sampling ARSession must never overlap the
+                    // RoomCaptureSession.
+                    lightGate.stop()
+                    onStart(customer)
+                } label: {
+                    Label("Start Visit", systemImage: "camera.metering.matrix")
+                        .font(.title3.weight(.bold))
+                        .frame(maxWidth: .infinity, minHeight: 58)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.yellow)
+                .foregroundStyle(.black)
+                .disabled(!lightGate.status.allowsStart)
+
+                #if DEBUG
+                debugFootnote
+                #endif
+            }
+            .padding(.bottom, 12)
+        }
+        .padding(.horizontal, 24)
+    }
+
+    @ViewBuilder
+    private var reportContent: some View {
+        switch lightGate.status {
+        case .complete(let worst):
+            VStack(alignment: .leading, spacing: 16) {
+                Label(
+                    lightGate.status.message ?? LightingGateCopy.lightGoodThroughout,
+                    systemImage: worst == .good ? "checkmark.circle.fill" : "lightbulb.slash"
+                )
+                .font(.body.weight(.semibold))
+                .foregroundStyle(worst == .good ? Color.green : Color.orange)
+
+                VStack(spacing: 0) {
+                    if let worstLumens = lightGate.worstLumens {
+                        reportRow("Lowest reading", "\(Int(worstLumens)) lm")
+                    }
+                    if lightGate.lowLightMoments > 0 {
+                        Divider().padding(.vertical, 8)
+                        reportRow("Low-light spots flagged", "\(lightGate.lowLightMoments)")
+                    }
+                }
+                .padding(16)
+                .background(Color(.secondarySystemBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+
+                if worst != .good {
+                    // Dim: advisory. Dark: Start stays disabled until a
+                    // re-walk clears it — same fail-safe, judged on the
+                    // walk's worst point.
+                    Button {
+                        lightGate.checkAgain()
+                        flow.reWalk()
+                    } label: {
+                        Label(LightingGateCopy.checkAgain, systemImage: "arrow.clockwise")
+                            .font(.body.weight(.semibold))
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+            .accessibilityElement(children: .combine)
+        case .unavailable:
+            // Fail open, but say so — a skipped check must not look like
+            // a passed one.
+            Label(LightingGateCopy.checkUnavailable, systemImage: "questionmark.circle")
+                .font(.body.weight(.medium))
+                .foregroundStyle(.secondary)
+        case .idle, .checking, .surveying:
+            EmptyView() // transient — the flow only lands here on terminal states
+        }
+    }
+
+    private func reportRow(_ label: String, _ value: String) -> some View {
+        HStack {
+            Text(label)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text(value)
+                .font(.subheadline.weight(.semibold).monospacedDigit())
+        }
+    }
+
+    #if DEBUG
+    // Debug builds always show the live gate state — "working and silent"
+    // must never look identical to "dead and silent" on a test device.
+    private var debugFootnote: some View {
+        Text(lightGate.debugReadout)
+            .font(.caption2.monospaced())
+            .foregroundStyle(.tertiary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    #endif
 }
