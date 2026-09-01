@@ -72,9 +72,20 @@ iOS app (requires Xcode + a LiDAR iPhone — the Simulator cannot run RoomPlan):
 
 ```bash
 cd iphone/BuildPilot
+cp Secrets.example.xcconfig Secrets.xcconfig   # one-time; gitignored, referenced by project.yml
 xcodegen generate     # the .xcodeproj is generated from project.yml, not committed
 open BuildPilot.xcodeproj
+
+# Unit tests (BuildPilotTests target — pure logic only, no RoomPlan; runs in the Simulator)
+xcodebuild test -project BuildPilot.xcodeproj -scheme BuildPilot \
+  -destination 'platform=iOS Simulator,name=iPhone 17'   # any installed simulator
 ```
+
+`Secrets.xcconfig` supplies `BUILDMATE_CONTRACTOR_ID` and `BUILDMATE_API_TOKEN`
+(Decision 32); `project.yml` references it for both configurations, so create it
+before generating. `BUILDMATE_API_TOKEN` must match the backend's
+`BUILDPILOT_API_TOKEN`; leave it empty for local Mac development, where auth is
+disabled.
 
 ## Architecture (the big picture)
 
@@ -102,6 +113,16 @@ completes:
    requirements + `CompanyProfile` → `EstimateDraft`.
 
 Key seams:
+- **Confidence engine** (`pipelines/confidence.py`, Decision 31) — deterministic
+  0-100 scan trust score blended from independent *signal providers*. A new
+  signal is a provider class plus one line in `DEFAULT_PROVIDERS`; a provider
+  with no data abstains (returns `None`) rather than scoring zero. Band
+  thresholds live here only — the UI reads bands, never raw numbers.
+- **Contractor identity** (`identity.py`, Decision 30) — every session belongs
+  to a contractor, resolved from the `X-Contractor-Id` header (falling back to
+  `DEFAULT_CONTRACTOR_ID`). V1 is single-tenant, but store/pipeline/routes are
+  already contractor-aware, so multi-tenancy only replaces `ContractorResolver`.
+  Deliberately *routing*, not a security boundary — that is `auth.py`'s job.
 - **Degradation policy** lives in `pipeline.py`: a scan with no walls fails the
   session; missing audio/Whisper or missing API key degrade to the default
   paint scope with a note. The pipeline always completes if the scan is usable.
@@ -125,6 +146,15 @@ Beyond the core estimate flow the server also exposes visit **revision**
 (`/sessions/{id}/revise`, `/versions`, `/versions/{v}/restore`), **photo**
 archival, and **visualization** (`/sessions/{id}/visualize`, `pipelines/visualization.py`) —
 an instruction-based image edit of a Before photo (Gemini/Vertex), presentation-only.
+`GET /` serves the Mac console (`console.html`) — session list, floor plan,
+transcript, estimate + calculation trail; it is the fastest way to inspect a
+visit without the phone.
+
+`pipelines/wall_projection.py` (+ `_debug.py`, behind
+`GET /sessions/{id}/debug/wall-projection`) is **internal validation only**:
+pure geometry proving RoomPlan walls map onto the right pixels of a captured
+frame. It generates no visualization and must never be wired into `/visualize`,
+the estimator, or pricing.
 
 ## Configuration (all env vars optional; see [backend/README.md](backend/README.md))
 

@@ -170,26 +170,132 @@ def test_fixed_object_away_from_walls_costs_nothing(captured_room):
     assert result.net_wall_area_m2 == 37.0
 
 
-def test_incomplete_scan_completes_missing_walls(captured_room):
-    """Room-closure check (Sprint 6): a scan that reconstructs only some
-    walls (furniture blocking them is the common field cause) must not
-    silently quote half the room. Missing wall area is completed from the
-    floor perimeter and flagged."""
-    captured_room["walls"] = captured_room["walls"][:2]  # one 5m + one 3m wall
+def test_incomplete_scan_is_flagged_not_completed(captured_room):
+    """Room-closure check (Decision 34): a scan that reconstructs only some
+    walls is flagged INCOMPLETE with the gaps located — the engine reports
+    exactly the measured area and never invents the rest."""
+    captured_room["walls"] = captured_room["walls"][:2]  # the two 5 m walls
     result = RoomPlanMeasurementEngine().measure(captured_room)
 
-    # captured widths 8m of a 16m perimeter → missing 8m x 2.5m = 20 m2
-    # gross 20 + 20 = 40; net 40 − 1.8 − 1.2 = 37 (same as the full room)
-    assert result.gross_wall_area_m2 == 40.0
-    assert result.net_wall_area_m2 == 37.0
+    # Exactly the measured area: 2 x (5 x 2.5) = 25; net 25 − 1.8 − 1.2 = 22.
+    assert result.gross_wall_area_m2 == 25.0
+    assert result.net_wall_area_m2 == 22.0
+    assert result.completeness.status == "incomplete"
+    assert "wall_loop_open" in result.completeness.flags
     assert result.confidence_score <= 0.55  # below the app's "Good" threshold
-    assert any("uncaptured walls" in note for note in result.notes)
+    assert any("no area added" in note for note in result.notes)
+
+    # The gap is located: both remaining walls are open at both ends, and
+    # every open edge names the wall, the end, and where it is.
+    edges = result.completeness.open_edges
+    assert {(e.wall_id, e.end) for e in edges} == {
+        ("w1", "start"), ("w1", "end"), ("w2", "start"), ("w2", "end"),
+    }
+    for edge in edges:
+        assert len(edge.position_m) == 2
+        assert edge.nearest_wall_id in {"w1", "w2"}
+        assert edge.gap_m == 3.0  # the missing 3 m side walls
+        assert edge.wall_id in edge.description
+
+    # Reserved for the correction screen; the engine never sets it.
+    assert result.completeness.human_confirmed is False
 
 
-def test_closed_room_is_not_completed(captured_room):
-    """The full fixture closes its perimeter exactly — no completion."""
+def test_closed_room_is_complete(captured_room):
+    """The full fixture closes its perimeter exactly — complete, no open
+    edges, and nothing about uncaptured walls in the notes."""
     result = RoomPlanMeasurementEngine().measure(captured_room)
-    assert not any("uncaptured walls" in note for note in result.notes)
+    assert result.completeness.status == "complete"
+    assert result.completeness.flags == []
+    assert result.completeness.open_edges == []
+    assert not any("uncaptured" in note for note in result.notes)
+
+
+def test_totals_always_reconcile_with_wall_breakdown(captured_room):
+    """One canonical number (Decision 34): room totals are exactly the sum
+    of the per-wall breakdown, complete or not."""
+    for variant in (captured_room, {**captured_room, "walls": captured_room["walls"][:2]}):
+        result = RoomPlanMeasurementEngine().measure(variant)
+        included = [w for w in result.walls if w.duplicate_of is None]
+        assert result.gross_wall_area_m2 == round(sum(w.gross_area_m2 for w in included), 2)
+        assert result.net_wall_area_m2 == round(sum(w.net_area_m2 for w in included), 2)
+
+
+def test_openings_carry_parent_wall_and_ids(captured_room):
+    """Openings are first-class: positional ids, parent wall, and the wall's
+    opening_ids back-reference (window on w1, door on w2)."""
+    result = RoomPlanMeasurementEngine().measure(captured_room)
+    by_id = {o.opening_id: o for o in result.openings}
+    assert by_id["d1"].kind == "door"
+    assert by_id["d1"].parent_wall_id == "w2"
+    assert by_id["d1"].area_m2 == 1.8
+    assert by_id["win1"].kind == "window"
+    assert by_id["win1"].parent_wall_id == "w1"
+    assert by_id["win1"].area_m2 == 1.2
+    # No parentIdentifier in this fixture → the nearest-wall fallback.
+    assert by_id["d1"].parent_source == "nearest_wall"
+    walls = {w.wall_id: w for w in result.walls}
+    assert walls["w1"].opening_ids == ["win1"]
+    assert walls["w2"].opening_ids == ["d1"]
+
+
+def test_parent_reference_beats_proximity(captured_room):
+    """A door with a parentIdentifier is assigned to THAT wall even when
+    another wall is geometrically closer."""
+    captured_room["doors"][0]["parentIdentifier"] = "wall-north"  # sits on south
+    result = RoomPlanMeasurementEngine().measure(captured_room)
+    door = next(o for o in result.openings if o.opening_id == "d1")
+    assert door.parent_source == "parent_reference"
+    assert door.parent_wall_id == "w1"  # wall-north is the first wall
+    walls = {w.wall_id: w for w in result.walls}
+    assert walls["w1"].opening_area_m2 == 3.0  # window 1.2 + door 1.8
+    assert walls["w2"].opening_area_m2 == 0.0
+
+
+def test_far_opening_matches_no_wall(captured_room):
+    """An opening beyond the assignment cap (e.g. from an adjacent room in a
+    multi-room scan) is not subtracted from anything, and is flagged."""
+    captured_room["doors"].append({
+        "identifier": "door-far",
+        "category": {"door": {"isOpen": True}},
+        "confidence": {"high": {}},
+        "dimensions": [0.9, 2.0, 0.0],
+        # 3 m outside the room — nearest wall is over the 0.5 m cap.
+        "transform": [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0.0, 1.0, 4.5, 1]],
+    })
+    result = RoomPlanMeasurementEngine().measure(captured_room)
+    far = next(o for o in result.openings if o.opening_id == "d2")
+    assert far.parent_wall_id is None
+    assert far.parent_source == "none"
+    assert "unassigned_opening" in result.completeness.flags
+    assert result.net_wall_area_m2 == 37.0  # unchanged — nothing subtracted
+
+
+def test_duplicate_wall_surface_is_excluded_once(captured_room):
+    """A split/duplicate surface of an existing wall is excluded from totals
+    (never double-counted), keeps its positional id, and is flagged."""
+    captured_room["walls"].append({
+        "identifier": "wall-north-duplicate",
+        "category": {"wall": {}},
+        "confidence": {"medium": {}},
+        # Same line as wall-north (z=-1.5), 3 m of its 5 m extent.
+        "dimensions": [3.0, 2.5, 0.0],
+        "transform": [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0.0, 1.25, -1.5, 1]],
+    })
+    result = RoomPlanMeasurementEngine().measure(captured_room)
+    assert result.gross_wall_area_m2 == 40.0  # unchanged — counted once
+    assert result.net_wall_area_m2 == 37.0
+    walls = {w.wall_id: w for w in result.walls}
+    assert walls["w5"].duplicate_of == "w1"
+    assert "duplicate_wall_surfaces" in result.completeness.flags
+    assert result.completeness.status == "complete"  # a dup doesn't open the loop
+
+
+def test_room_shape_facts_reported(captured_room):
+    result = RoomPlanMeasurementEngine().measure(captured_room)
+    assert result.perimeter_m == 16.0
+    assert result.ceiling_height_m == 2.5
+    assert result.flat_ceiling_assumed is True
 
 
 def test_wall_details_break_down_per_wall(captured_room):

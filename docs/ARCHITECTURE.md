@@ -66,8 +66,14 @@ inspectable artifacts.
    defensively (both known encodings of enums/matrices), floor area from the
    scanned polygon with a wall-footprint fallback, area-weighted confidence,
    and notes explaining every non-obvious choice. Required: failure fails the
-   session. Emits structured capture-quality signals (`wall_perimeter_ratio`,
-   `floor_captured`) for the confidence engine.
+   session. A pure function of the scan geometry (Decision 34): openings
+   resolve to walls via RoomPlan's `parentIdentifier` (nearest-wall
+   fallback), room totals are exactly the sum of the per-wall breakdown, and
+   a scan whose wall loop doesn't close is flagged `incomplete` with each
+   open wall edge located — never silently completed with invented area.
+   Emits structured capture-quality signals (`wall_perimeter_ratio`,
+   `floor_captured`, the `completeness` block) for the confidence engine and
+   the app.
 1b. **Confidence** (`pipelines/confidence.py`, Decision 31) — deterministic,
    never AI. Blends independent signal providers (geometry confidence, wall
    completeness, floor coverage today; lighting/motion/occlusion/edit-count are

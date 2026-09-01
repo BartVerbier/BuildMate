@@ -156,10 +156,19 @@ class VisitPipeline:
         # Unknown ids are dropped; an empty result means "all walls".
         if session.requirements and session.measurements:
             known = {w.wall_id for w in session.measurements.walls}
+            requested = session.requirements.painted_wall_ids
             session.requirements.painted_wall_ids = [
-                wall_id for wall_id in session.requirements.painted_wall_ids
-                if wall_id in known
+                wall_id for wall_id in requested if wall_id in known
             ]
+            # Backstop: the customer limited painting to specific walls but
+            # every id the model gave was bogus. Empty ids price the WHOLE
+            # room — that must never be silent (Decision 34 spirit: flag,
+            # don't paper over).
+            if requested and not session.requirements.painted_wall_ids:
+                session.requirements.unresolved_wall_reference = (
+                    session.requirements.unresolved_wall_reference
+                    or "the wall(s) described in the conversation"
+                )
         store.save(session)
 
         # 4. Deterministic estimation (never AI)

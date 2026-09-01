@@ -255,13 +255,17 @@ render adapter, not the capture flow, pipeline, or data model.
 
 ## Decision 26: Measurement completes uncaptured walls; renders belong to the phone (2026-07-11)
 
-**Room-closure completion.** Real scans often reconstruct only some walls
-(furniture blocks the LiDAR sweep) — a field scan captured 2 of 4 walls and
-would have quoted half the room. The engine now compares total wall width
-against the floor-polygon perimeter; below 90% coverage it adds the missing
-wall area deterministically (missing perimeter × median wall height), notes
-it ("verify on site"), and caps confidence at 0.55 so the app always shows
-"check the room". Deterministic, hand-computable, tested.
+**Room-closure completion.** *(SUPERSEDED by Decision 34 — the completion
+fabricated area; an audit against 14 real scans showed it firing on 13 of
+them and inventing 44% of total wall area. The closure check survives as an
+incompleteness flag; the fabrication is gone.)* Real scans often reconstruct
+only some walls (furniture blocks the LiDAR sweep) — a field scan captured
+2 of 4 walls and would have quoted half the room. The engine now compares
+total wall width against the floor-polygon perimeter; below 90% coverage it
+adds the missing wall area deterministically (missing perimeter × median
+wall height), notes it ("verify on site"), and caps confidence at 0.55 so
+the app always shows "check the room". Deterministic, hand-computable,
+tested.
 
 **Low storage is movable.** RoomPlan has no bench/sideboard category — both
 report as "storage" like a built-in wardrobe. Storage under 1.4 m tall is
@@ -410,6 +414,53 @@ success messages, confirmation dialogs, transitions) — ship-ready for
 TestFlight. A visual *refresh* (new colour/type language, premium restyle) is
 explicitly deferred to a separate milestone after the manual-editing flagship,
 once real usage has informed it. Not a visual overhaul now.
+
+## Decision 34: Incomplete scans are flagged, never completed (2026-08-16)
+
+Founder decision, supersedes the room-closure completion half of Decision 26.
+Measured against the 14 real scans archived from the July field sessions, the
+Decision 26 completion heuristic fired on 13 and fabricated 44% of all
+reported wall area — the floor polygon it trusted as "the room's perimeter"
+was itself a partial reconstruction in exactly those scans. The heuristic's
+error grew as scan quality fell.
+
+The measurement engine is now a **pure function of the scan geometry** and
+never invents area:
+
+- **No fabrication.** Room totals are exactly the sum of the per-wall
+  breakdown (excluded duplicates aside), so the totals and the breakdown can
+  never diverge — the old engine disagreed with itself by 28-65% on real
+  scans, and which number got priced depended on what was said in the
+  conversation.
+- **Incomplete is a first-class verdict.** When the wall loop doesn't close
+  (wall widths < 90% of the floor-polygon perimeter) or no usable floor
+  polygon exists, the measurement carries a `completeness` block:
+  `status: incomplete`, typed flags, and **located gaps** — each open wall
+  end with its wall id, which end, ground-plane position, and distance to
+  the nearest other wall, so the app can point the user straight at what to
+  rescan. Confidence stays capped at 0.55.
+- **`human_confirmed`** (default false) ships on the completeness block now,
+  reserved for the correction screen. The engine never sets it. Design
+  intent for a follow-up milestone: the estimate layer will refuse to quote
+  unless `status == "complete"` or `human_confirmed == true` — rescan is the
+  primary resolution, explicit human confirmation the override for genuinely
+  unscannable walls. (Not built yet; the estimator is unchanged in this
+  change.)
+- **Openings resolve via RoomPlan's `parentIdentifier`** where present
+  (authoritative), with the nearest-wall fallback capped at 0.5 m so an
+  opening from an adjacent room matches nothing rather than the wrong wall.
+  Unmatched openings are not subtracted and are flagged.
+- **Duplicate/split wall surfaces** (colinear, overlapping, same height) are
+  excluded from totals once, keep their positional wall id, and are flagged.
+- **New room facts** for the future estimate layer: per-opening details with
+  parent wall ids, `perimeter_m`, `ceiling_height_m`, and an explicit
+  `flat_ceiling_assumed` flag replacing the buried prose note.
+
+The 14 real scans are promoted to `tests/fixtures/real_scans/` and a
+dedicated suite asserts, for every one: no fabricated area, totals that
+reconcile, floor from the polygon, parent references honoured, and open
+loops flagged with located gaps. The synthetic rectangle remains the
+closed-room baseline.
 
 ## Rationale
 
