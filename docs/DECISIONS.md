@@ -444,8 +444,11 @@ never invents area:
   intent for a follow-up milestone: the estimate layer will refuse to quote
   unless `status == "complete"` or `human_confirmed == true` — rescan is the
   primary resolution, explicit human confirmation the override for genuinely
-  unscannable walls. (Not built yet; the estimator is unchanged in this
-  change.)
+  unscannable walls. (Built 2026-09-01: EstimateDraft carries quotable/not_quotable_reason,
+  and POST /sessions/{id}/reestimate — previously missing entirely, the
+  phone's Edit Plan posted into a 404 — applies manual corrections, keeps
+  totals reconciled with the per-wall breakdown, and maps the on-site
+  verification toggle to human_confirmed.)
 - **Openings resolve via RoomPlan's `parentIdentifier`** where present
   (authoritative), with the nearest-wall fallback capped at 0.5 m so an
   opening from an adjacent room matches nothing rather than the wrong wall.
