@@ -66,6 +66,10 @@ enum Format {
         String(format: "%.2f h", value)
     }
 
+    static func metres(_ value: Double) -> String {
+        String(format: "%.1f m", value)
+    }
+
     static func squareMetres(_ value: Double) -> String {
         String(format: "%.1f m²", value)
     }

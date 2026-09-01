@@ -1,5 +1,6 @@
 import Foundation
 import OSLog
+import RoomPlan
 import SwiftUI
 
 /// Unified logging for field diagnostics — filter in Console.app with
@@ -57,6 +58,7 @@ final class VisitController: ObservableObject {
         case connecting // preflight before scanning starts
         case scanning
         case revising(SessionResponse) // recording the customer's change request
+        case scanReview(WallLoopStatus) // wall loop open: rescan or proceed flagged
         case processing(ProcessingStage)
         case done(SessionResponse)
         case failed(message: String, canRetry: Bool)
@@ -102,6 +104,10 @@ final class VisitController: ObservableObject {
     // cancel; on success the new estimate replaces it in place.
     /// True while a rescan is in progress (drives the capture screen indicator).
     @Published private(set) var isRescanning = false
+    /// Capture-closure state machine (pure logic, unit-tested). Guidance
+    /// only: the backend recomputes its own completeness verdict from the
+    /// same verbatim scan JSON.
+    private(set) var guidedCapture = GuidedCaptureFlow()
     /// The audio from the last completed capture, reused by a rescan so the
     /// painter never loses the conversation (unique temp file, not overwritten).
     private var lastAudioFile: URL?
@@ -196,7 +202,17 @@ final class VisitController: ObservableObject {
                     let poses = rescan ? nil : self.roomCapture.posesJSON()
                     visitLog.info("Scan finalized: \(roomJSON.count) bytes room JSON, audio: \(audioFile != nil), poses: \(poses?.count ?? 0) bytes, rescan: \(rescan)")
                     self.pendingBundle = (roomJSON, audioFile, poses)
-                    await self.uploadPendingBundle()
+                    // Wall-loop gate: an open loop gets a review screen with
+                    // the located gaps before anything is uploaded. Closed
+                    // (or unassessable) proceeds exactly as before.
+                    let status = Self.wallLoopStatus(fromRoomJSON: roomJSON)
+                    self.guidedCapture.scanEnded(status)
+                    if case .open(let ends, let walls) = status {
+                        visitLog.info("Wall loop open: \(ends.count) gap(s) across \(walls) wall(s) — showing scan review")
+                        self.phase = .scanReview(status)
+                    } else {
+                        await self.uploadPendingBundle()
+                    }
                 case .failure(let error):
                     visitLog.error("RoomPlan processing failed: \(error.localizedDescription)")
                     self.phase = .failed(
@@ -208,6 +224,47 @@ final class VisitController: ObservableObject {
         }
         roomCapture.stop()
     }
+
+    /// Decode the encoded CapturedRoom and assess the ground-plane wall loop.
+    /// Falls back to .noWalls (no gate) when the JSON does not decode — the
+    /// backend is the authority and will fail or flag the scan itself.
+    static func wallLoopStatus(fromRoomJSON data: Data) -> WallLoopStatus {
+        guard let room = try? JSONDecoder().decode(CapturedRoom.self, from: data) else {
+            return .noWalls
+        }
+        return WallLoop.assess(WallLoop.footprints(
+            transforms: room.walls.map(\.transform),
+            dimensions: room.walls.map(\.dimensions)
+        ))
+    }
+
+    /// Scan review: proceed with the open loop. The backend will measure it
+    /// incomplete and the estimate will not be quotable until verified —
+    /// allowed, never silent (Decision 34).
+    func useScanAnyway() {
+        guard case .scanReview = phase else { return }
+        visitLog.info("Scan review: proceeding with open wall loop — backend will flag it")
+        Task { await uploadPendingBundle() }
+    }
+
+    /// Scan review: walk the room again to close the loop. The conversation
+    /// audio (already stopped by Finish) is kept verbatim; poses are skipped
+    /// on upload, same as a post-upload rescan.
+    func scanTheGaps() {
+        guard case .scanReview = phase, guidedCapture.rescan() else { return }
+        if let audio = pendingBundle?.audioFile { lastAudioFile = audio }
+        rescanReuseAudio = lastAudioFile != nil
+        isRescanning = true
+        pendingBundle = nil
+        scanStartedAt = Date()
+        roomCapture.start(clockReference: Date())
+        visitLog.info("Scan review: re-scanning to close the loop (rescan #\(self.guidedCapture.rescanCount))")
+        phase = .scanning
+    }
+
+    /// Whether cancelling a rescan has a quote to return to (a gap-rescan
+    /// before first upload does not — cancelling discards the visit).
+    var canReturnToQuote: Bool { rescanReturnSession != nil }
 
     /// Re-capture the room geometry for the current visit, keeping the original
     /// conversation and requirements. The existing quote is preserved and shown

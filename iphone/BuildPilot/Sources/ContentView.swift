@@ -53,6 +53,8 @@ struct ContentView: View {
             CaptureVisitView(visit: visit)
         case .revising(let session):
             RevisionRecordingView(session: session, visit: visit)
+        case .scanReview(let status):
+            ScanReviewView(visit: visit, status: status)
         case .processing(let stage):
             ProcessingView(stage: stage)
         case .done(let session):

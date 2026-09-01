@@ -188,4 +188,11 @@ struct EstimateDraft: Codable {
     let suggestedQuotationEur: Double
     let currency: String
     let assumptions: [String]
+    // Completeness gate (Decision 34): false when the scan did not capture
+    // the whole room and nobody verified the measurements on site. Optional
+    // so sessions estimated by older backends decode; absent means quotable.
+    let quotable: Bool?
+    let notQuotableReason: String?
+
+    var isQuotable: Bool { quotable ?? true }
 }

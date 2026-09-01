@@ -33,11 +33,11 @@ struct CaptureVisitView: View {
             isPresented: $confirmCancel,
             titleVisibility: .visible
         ) {
-            Button(visit.isRescanning ? "Stop — keep current quote" : "Discard Visit",
+            Button(visit.isRescanning && visit.canReturnToQuote ? "Stop — keep current quote" : "Discard Visit",
                    role: .destructive) { visit.cancelVisit() }
             Button("Keep Scanning", role: .cancel) {}
         } message: {
-            Text(visit.isRescanning
+            Text(visit.isRescanning && visit.canReturnToQuote
                  ? "Your existing quote stays exactly as it is."
                  : "The room scan and audio recording will be deleted.")
         }

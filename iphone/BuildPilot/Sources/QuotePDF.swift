@@ -288,6 +288,19 @@ private struct SummaryPage: View {
                 .clipShape(RoundedRectangle(cornerRadius: 8))
                 .padding(.top, 8)
 
+                // Completeness gate (Decision 34): an unverified partial scan
+                // must never leave the phone looking like a quotation.
+                if !e.isQuotable {
+                    Text("DRAFT — NOT FOR QUOTATION. The scan did not capture the whole room; this prices only what was scanned. Verify the measurements on site or rescan before quoting.")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(.red)
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.red.opacity(0.1))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .padding(.top, 6)
+                }
+
                 if let r = session.requirements, r.transcriptAvailable {
                     SectionTitle("Project Summary")
                     Text(ConversationSummary.sentence(for: r))

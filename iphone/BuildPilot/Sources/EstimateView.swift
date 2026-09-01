@@ -110,6 +110,7 @@ struct EstimateView: View {
                 // ABOVE the price: a specific-wall request that couldn't be
                 // grounded means the hero number prices the WHOLE room —
                 // that must never read as a correctly scoped quote.
+                notQuotableCard
                 wallScopeAlertCard
                 heroCard
                 proposedResultCard
@@ -358,6 +359,39 @@ struct EstimateView: View {
     }
 
     // MARK: sections
+
+    /// The completeness gate (Decision 34): the scan did not capture the
+    /// whole room and nobody has verified the measurements, so this draft
+    /// prices only what was scanned and must not go out as a quotation.
+    /// Clears itself after a rescan or the Edit Plan verification toggle.
+    @ViewBuilder
+    private var notQuotableCard: some View {
+        if let estimate = session.estimate, !estimate.isQuotable {
+            VStack(alignment: .leading, spacing: 10) {
+                Label("Not ready to quote", systemImage: "exclamationmark.octagon.fill")
+                    .font(.headline)
+                    .foregroundStyle(.red)
+                Text(estimate.notQuotableReason ??
+                     "The scan did not capture the whole room — rescan, or verify the measurements on site before quoting.")
+                    .font(.subheadline)
+                if onEditPlan != nil {
+                    Button {
+                        showEditPlan = true
+                    } label: {
+                        Label("Verify Measurements", systemImage: "checkmark.seal")
+                            .font(.body.weight(.semibold))
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.red)
+                }
+            }
+            .padding(14)
+            .background(.red.opacity(0.12), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(.red.opacity(0.55), lineWidth: 1.5))
+            .accessibilityElement(children: .combine)
+        }
+    }
 
     /// The whole-room-fallback warning (WallScopeAlert). Routes straight to
     /// Edit Plan's existing painted-wall selection; the alert clears itself
@@ -756,6 +790,9 @@ struct EstimateView: View {
         if !identity.companyName.isEmpty { lines.append(identity.companyName) }
         if !identity.contactLine.isEmpty { lines.append(identity.contactLine) }
         lines.append("Painting Estimate — \(visitName)")
+        if session.estimate?.isQuotable == false {
+            lines.append("DRAFT — NOT FOR QUOTATION: the scan did not capture the whole room; measurements are unverified.")
+        }
         if let e = session.estimate {
             lines.append("Suggested price (incl. VAT): \(Format.money(e.suggestedQuotationEur, currency: session.currencyCode))")
             lines.append("Labour: \(Format.hours(e.labourHours)) · \(Format.money(e.labourCostEur, currency: session.currencyCode))")
