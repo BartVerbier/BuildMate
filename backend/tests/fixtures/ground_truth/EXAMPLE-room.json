@@ -1,0 +1,41 @@
+{
+  "visit_id": "visit-20260902-091500-abc123",
+  "scan_pattern": "A",
+  "room_label": "Living room, 1st floor",
+  "notes": "Long room, bay window at south end.",
+
+  "laser": {
+    "walls_m": [
+      { "label": "north (door wall)", "length_m": 4.62 },
+      { "label": "east (window wall)", "length_m": 3.15 },
+      { "label": "south", "length_m": 4.62 },
+      { "label": "west", "length_m": 3.15 }
+    ],
+    "ceiling_height_m": [2.44, 2.46],
+    "openings": [
+      { "type": "door",   "wall": "north", "width_m": 0.83, "height_m": 2.03 },
+      { "type": "window", "wall": "east",  "width_m": 1.42, "height_m": 1.28 }
+    ],
+    "built_ins": [
+      { "what": "fitted wardrobe", "wall": "west", "width_m": 1.80, "height_m": 2.30 }
+    ]
+  },
+
+  "conditions": {
+    "flooring": "carpet",
+    "mirrors_or_glass": true,
+    "dark_or_gloss_walls": false,
+    "brightness": "dim",
+    "furniture_density": "heavy"
+  },
+
+  "painter_estimate": {
+    "paintable_area_m2": 34.5,
+    "prep_hours": 2.0,
+    "protection_hours": 1.5,
+    "total_hours": 11.0,
+    "materials_eur": 145.00,
+    "quoted_price_eur": 980.00,
+    "comment": "Wardrobe stays; cut in around it. Carpet needs full protection."
+  }
+}

@@ -199,6 +199,18 @@ def test_vertex_mode_selected_when_project_set(monkeypatch):
     monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "global")
     assert GeminiVisualizer.is_available() is True
     GeminiVisualizer._vertex_credentials = None
+    # Without this, google.auth.default() probes the GCE metadata server and
+    # blocks ~90s on a developer machine — 97% of the whole suite's runtime.
+    # Raising DefaultCredentialsError is exactly what google-auth concludes
+    # once that probe fails, so the assertion below is unchanged in meaning.
+    import google.auth
+    from google.auth.exceptions import DefaultCredentialsError
+
+    monkeypatch.setattr(
+        google.auth,
+        "default",
+        lambda **_: (_ for _ in ()).throw(DefaultCredentialsError("no credentials")),
+    )
     try:
         GeminiVisualizer().render(b"\xff\xd8", RequirementExtraction())
         raise AssertionError("expected VisualizationError")
