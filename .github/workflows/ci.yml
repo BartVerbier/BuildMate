@@ -1,0 +1,35 @@
+# Backend CI — the deterministic pipeline must prove itself on every push.
+#
+# Runs the full pytest suite (1.6s locally; the gated real-Whisper test stays
+# off in CI). Linux mirrors the Railway runtime: the platform marker installs
+# faster-whisper and skips MLX, exactly as production does.
+#
+# iOS is deliberately NOT built here yet: GitHub's macOS runners need an
+# Xcode/simulator pairing we have not validated, and a CI lane that can go
+# red for environment reasons trains everyone to ignore it. It gets added
+# once we can iterate on it deliberately.
+
+name: CI
+
+on:
+  push:
+    branches: [main, prototype-v1]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"   # the declared minimum; dev Macs run newer
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+      - name: Install
+        run: pip install -e ".[dev]"
+      - name: Test
+        run: python -m pytest -q
