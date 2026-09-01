@@ -47,9 +47,14 @@ Rules:
   ONLY when the conversation clearly limits painting to specific wall(s)
   (e.g. "look at this wall", "only this wall", "just the white wall" said
   while facing it). Use ONLY ids from the provided inventory. When the
-  whole room is being painted, or you are not sure which wall is meant,
-  leave painted_wall_ids empty — empty means all walls.
-- The transcript may contain filler and unrelated small talk; ignore it."""
+  whole room is being painted, leave painted_wall_ids empty — empty means
+  all walls.
+- unresolved_wall_reference: when the conversation clearly LIMITS painting
+  to specific wall(s) but you cannot confidently tell WHICH wall id is
+  meant (no gaze annotation, a description like "the wall with the TV"
+  that the inventory cannot settle), put the customer's own words for the
+  wall here and leave painted_wall_ids empty. Never guess a wall id. Leave
+  this null when the whole room is meant or the walls were identified."""
 
 
 class _LlmExtraction(BaseModel):
@@ -61,6 +66,10 @@ class _LlmExtraction(BaseModel):
     special_notes: List[str] = Field(default_factory=list)
     paint_scope: PaintScope = Field(default_factory=PaintScope)
     painted_wall_ids: List[str] = Field(default_factory=list)
+    # The customer's words for a wall the model could not map to an id.
+    # Set only when painting is limited to specific walls that could NOT
+    # be identified — never alongside a confident painted_wall_ids.
+    unresolved_wall_reference: str | None = None
 
 
 class _LlmRevision(_LlmExtraction):
@@ -87,6 +96,14 @@ requested changes. Produce the complete UPDATED requirements:
   which walls are painted (e.g. "actually paint every wall" → empty list,
   meaning all walls; "also the wall by the window" → add its id from the
   wall inventory if one is provided). Use only ids from the inventory.
+- unresolved_wall_reference: if the change limits painting to specific
+  wall(s) but you cannot confidently tell WHICH wall id is meant from the
+  inventory (revisions carry no camera/gaze context — a description like
+  "the wall with the TV" usually cannot be settled), put the customer's
+  own words for the wall here, leave painted_wall_ids empty, and say so in
+  `changes`. NEVER guess a wall id, and never leave this null when a
+  specific-wall request went unmatched — an empty painted_wall_ids is
+  priced as the WHOLE room.
 - If the transcript contains no actionable change, return the current
   requirements unchanged and an empty `changes` list."""
 
@@ -179,6 +196,7 @@ class ClaudeRequirementsExtractor:
             special_notes=extracted.special_notes,
             paint_scope=extracted.paint_scope,
             painted_wall_ids=extracted.painted_wall_ids,
+            unresolved_wall_reference=extracted.unresolved_wall_reference,
             transcript_available=True,
         )
 
@@ -239,6 +257,7 @@ class ClaudeRequirementsExtractor:
             special_notes=revision.special_notes,
             paint_scope=revision.paint_scope,
             painted_wall_ids=revision.painted_wall_ids,
+            unresolved_wall_reference=revision.unresolved_wall_reference,
             transcript_available=True,
         )
         return updated, revision.changes

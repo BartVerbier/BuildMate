@@ -318,9 +318,27 @@ def create_app(
         # Hard constraint (same as the pipeline): only walls that exist.
         if session.measurements:
             known = {w.wall_id for w in session.measurements.walls}
+            requested = updated.painted_wall_ids
             updated.painted_wall_ids = [
-                wall_id for wall_id in updated.painted_wall_ids if wall_id in known
+                wall_id for wall_id in requested if wall_id in known
             ]
+            # Backstop: specific walls were named but none matched the scan.
+            if requested and not updated.painted_wall_ids:
+                updated.unresolved_wall_reference = (
+                    updated.unresolved_wall_reference
+                    or "the wall(s) described in the change"
+                )
+
+        # An unresolved wall reference means the quote covers ALL walls
+        # despite the customer asking for specific ones — the change list
+        # must say so in words the painter cannot miss, and the app blocks
+        # on a wall choice (Edit Plan) until painted_wall_ids is filled.
+        if updated.unresolved_wall_reference and not updated.painted_wall_ids:
+            changes.append(
+                f"Couldn't match “{updated.unresolved_wall_reference}” "
+                "to a specific wall — the quote still covers ALL walls. "
+                "Choose the wall(s) in Edit Plan."
+            )
 
         old = session.estimate
         session.requirements = updated
@@ -436,6 +454,45 @@ def create_app(
         if not path.exists():
             raise HTTPException(404, "No transcript for this session")
         return path.read_text()
+
+    @app.get("/sessions/{session_id}/debug/wall-projection")
+    def debug_wall_projection(
+        session_id: str,
+        format: str = "html",
+        contractor: Contractor = Depends(current_contractor),
+    ) -> Response:
+        """INTERNAL debug (Stage 0 of the per-wall visualization redesign).
+
+        Reports where each RoomPlan wall + its openings project onto the best
+        Before frame, with a conservative confidence band. Generates NO
+        visualization and never touches /visualize, the estimator, or pricing.
+        Disabled unless BUILDPILOT_DEBUG_PROJECTION is set — 404 otherwise, so
+        it is never exposed in production by default.
+        """
+        if not os.environ.get("BUILDPILOT_DEBUG_PROJECTION"):
+            raise HTTPException(404, "Not Found")
+        from buildpilot.pipelines import wall_projection_debug as dbg
+        from buildpilot.pipelines.wall_projection import project_walls, read_jpeg_size
+
+        session = _load_or_404(session_id, contractor.contractor_id)
+        store: SessionStore = app.state.store
+        photos_dir = store.session_dir(session.session_id) / "photos"
+        before = sorted(photos_dir.glob("before-*.jpg")) if photos_dir.exists() else []
+        times_path = photos_dir / PHOTO_TIMES_FILE
+        frame_times = json.loads(times_path.read_text()) if times_path.exists() else {}
+        images = {p.name: p.read_bytes() for p in before}
+        jpeg_sizes = {
+            name: size for name, data in images.items()
+            if (size := read_jpeg_size(data)) is not None
+        }
+        room_json = store.load_room_scan(session)
+        poses = store.load_poses(session)
+
+        results = project_walls(room_json, poses, frame_times, jpeg_sizes)
+        if format == "json":
+            from fastapi.responses import JSONResponse
+            return JSONResponse(dbg.summary(results))
+        return HTMLResponse(dbg.render_html(results, images, jpeg_sizes))
 
     @app.get("/", response_class=HTMLResponse)
     def console() -> str:
