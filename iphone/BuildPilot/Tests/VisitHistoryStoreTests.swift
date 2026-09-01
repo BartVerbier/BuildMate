@@ -76,4 +76,68 @@ final class VisitHistoryStoreTests: XCTestCase {
         XCTAssertEqual(reopened.records.count, 1)
         XCTAssertEqual(reopened.record(for: "v1")?.planState, "confirmed")
     }
+
+    // MARK: - reopened-visit voice editing ("Make Changes")
+
+    private func snapshot() -> BusinessSnapshot {
+        BusinessSnapshot(
+            companyName: "Nordic", contactName: "Ari", phone: "", email: "",
+            website: "", address: "", vatNumber: "", currencyCode: "DKK", terms: "T"
+        )
+    }
+
+    /// A reopened voice edit applies the /revise result to the SAME record in
+    /// place — no duplicate, session replaced, customer/photos/snapshot/state
+    /// all preserved, and outputs marked stale (PDF always; visualization only
+    /// when the backend requires a re-render). Mirrors the exact store calls in
+    /// VisitController.applyHistoricalRevision.
+    func testHistoricalRevisionUpdatesInPlacePreservingEverything() {
+        let store = makeStore()
+        store.add(name: "Kitchen", session: session("v1"), business: snapshot())
+        store.setCustomer(name: "Alice", address: "1 Road", for: "v1")
+        store.addPhoto(VisitPhoto(id: "p1", kind: .before, fileName: "p1.jpg", date: Date()), to: "v1")
+        store.setPlanState("confirmed", for: "v1")
+
+        // The revision: same id, new session content, render required → viz stale.
+        store.add(name: "Kitchen", session: session("v1"))
+        store.markStale(pdf: true, visualization: true, for: "v1")
+
+        XCTAssertEqual(store.records.count, 1)                     // no duplicate visit
+        let r = store.record(for: "v1")
+        XCTAssertEqual(r?.customerName, "Alice")                   // customer preserved
+        XCTAssertEqual(r?.photos?.count, 1)                        // photos preserved
+        XCTAssertEqual(r?.businessSnapshot?.currencyCode, "DKK")   // snapshot preserved
+        XCTAssertEqual(r?.planState, "modified")                  // confirmed → modified
+        XCTAssertEqual(r?.pdfStale, true)                          // PDF stale
+        XCTAssertEqual(r?.visualizationStale, true)                // render required → viz stale
+    }
+
+    func testRevisionMetadataCountsInPlaceEditsOnly() {
+        let store = makeStore()
+        store.add(name: "Kitchen", session: session("v1"))       // first creation
+        XCTAssertNil(store.record(for: "v1")?.revisionCount)      // not a revision
+        XCTAssertNil(store.record(for: "v1")?.lastRevisedAt)
+
+        store.add(name: "Kitchen", session: session("v1"))       // in-place edit #1
+        XCTAssertEqual(store.record(for: "v1")?.revisionCount, 1)
+        XCTAssertNotNil(store.record(for: "v1")?.lastRevisedAt)
+
+        store.add(name: "Kitchen", session: session("v1"))       // in-place edit #2
+        XCTAssertEqual(store.record(for: "v1")?.revisionCount, 2)
+
+        // A different, freshly-created visit carries no revision metadata.
+        store.add(name: "Hall", session: session("v2"))
+        XCTAssertNil(store.record(for: "v2")?.revisionCount)
+    }
+
+    func testHistoricalRevisionWithoutRenderKeepsVisualizationFresh() {
+        let store = makeStore()
+        store.add(name: "Kitchen", session: session("v1"))
+        // renderRequired = false → PDF stale, visualization left untouched.
+        store.add(name: "Kitchen", session: session("v1"))
+        store.markStale(pdf: true, visualization: false, for: "v1")
+        XCTAssertEqual(store.records.count, 1)
+        XCTAssertEqual(store.record(for: "v1")?.pdfStale, true)
+        XCTAssertNotEqual(store.record(for: "v1")?.visualizationStale, true)
+    }
 }

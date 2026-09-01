@@ -242,6 +242,21 @@ private struct SummaryPage: View {
                 // Executive summary: the whole quotation at a glance —
                 // areas, quantities, cost lines, then the total.
                 SectionTitle("Your Quotation at a Glance")
+                // A specific-wall request that couldn't be grounded means
+                // every number below prices the WHOLE room — the PDF must
+                // say so as loudly as the app does, or the quote reads as
+                // correctly scoped when it isn't.
+                if let warning = WallScopeAlert.message(for: session.requirements) {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text("⚠").font(.system(size: 12, weight: .bold))
+                        Text(warning)
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .foregroundStyle(.orange)
+                    .padding(8)
+                    .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+                    .padding(.bottom, 6)
+                }
                 if let m = session.measurements {
                     if let sel = session.wallSelection {
                         Line("Paintable wall area (\(sel.selected) of \(sel.total) walls)",

@@ -107,6 +107,10 @@ struct EstimateView: View {
         ScrollView {
             VStack(spacing: 16) {
                 changesCard
+                // ABOVE the price: a specific-wall request that couldn't be
+                // grounded means the hero number prices the WHOLE room —
+                // that must never read as a correctly scoped quote.
+                wallScopeAlertCard
                 heroCard
                 proposedResultCard
                 customerCard
@@ -355,6 +359,35 @@ struct EstimateView: View {
 
     // MARK: sections
 
+    /// The whole-room-fallback warning (WallScopeAlert). Routes straight to
+    /// Edit Plan's existing painted-wall selection; the alert clears itself
+    /// once paintedWallIds is non-empty after the re-estimate.
+    @ViewBuilder
+    private var wallScopeAlertCard: some View {
+        if let message = WallScopeAlert.message(for: session.requirements) {
+            VStack(alignment: .leading, spacing: 10) {
+                Label(message, systemImage: "exclamationmark.triangle.fill")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(.orange)
+                if onEditPlan != nil {
+                    Button {
+                        showEditPlan = true
+                    } label: {
+                        Label("Choose the Wall(s)", systemImage: "square.split.bottomrightquarter")
+                            .font(.body.weight(.semibold))
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.orange)
+                }
+            }
+            .padding(14)
+            .background(.orange.opacity(0.15), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(.orange.opacity(0.6), lineWidth: 1.5))
+            .accessibilityElement(children: .combine)
+        }
+    }
+
     private var heroCard: some View {
         VStack(spacing: 8) {
             if let customer = record?.customerName, !customer.isEmpty {
@@ -498,6 +531,14 @@ struct EstimateView: View {
                 .lineSpacing(3)
         }
         Card(title: "Scope of Work") {
+            if let notice = ScopeNotice.message(for: r) {
+                // Silent walkthrough: every stage below is a default, not
+                // something the customer asked for — say so, don't hide it.
+                Label(notice, systemImage: "exclamationmark.triangle.fill")
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(.orange)
+                    .padding(.bottom, 6)
+            }
             ForEach(WorkPlan.stages(for: r, measurements: session.measurements)) { stage in
                 VStack(alignment: .leading, spacing: 6) {
                     Text(stage.title.uppercased())

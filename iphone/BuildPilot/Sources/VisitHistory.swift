@@ -25,6 +25,11 @@ struct VisitRecord: Codable, Identifiable {
     // Optional so records saved by earlier builds still decode (they fall back
     // to the live identity, matching prior behaviour).
     var businessSnapshot: BusinessSnapshot?
+    // Lightweight revision metadata: how many in-place edits/voice changes this
+    // visit has had since creation, and when it was last changed. nil = never
+    // edited. Optional so records saved by earlier builds still decode.
+    var revisionCount: Int?
+    var lastRevisedAt: Date?
 }
 
 @MainActor
@@ -62,6 +67,15 @@ final class VisitHistoryStore: ObservableObject {
         // Freeze the business identity once, at creation; every later in-place
         // edit keeps the original snapshot so the quote never silently restyles.
         record.businessSnapshot = existing?.businessSnapshot ?? business
+        // Revision metadata: replacing an existing visit's session in place is an
+        // edit/revision (voice or plan) — bump the count and stamp the time. A
+        // fresh visit (no existing record) starts with no revisions.
+        record.revisionCount = existing?.revisionCount
+        record.lastRevisedAt = existing?.lastRevisedAt
+        if existing != nil {
+            record.revisionCount = (existing?.revisionCount ?? 0) + 1
+            record.lastRevisedAt = Date()
+        }
         if let customer {
             record.customerName = customer.name.isEmpty ? record.customerName : customer.name
             record.customerAddress = customer.address.isEmpty ? record.customerAddress : customer.address

@@ -7,6 +7,8 @@ struct VisitsHomeView: View {
     @ObservedObject var visit: VisitController
     @ObservedObject private var history: VisitHistoryStore
     @State private var showSettings = false
+    /// The reopened visit currently having a spoken change recorded, if any.
+    @State private var voiceRevisionRecord: VisitRecord?
 
     init(visit: VisitController) {
         self.visit = visit
@@ -38,6 +40,13 @@ struct VisitsHomeView: View {
         .sheet(isPresented: $showSettings) {
             SettingsSheet(backendURLString: visit.$backendURLString, settings: visit.settings)
         }
+        .sheet(item: $voiceRevisionRecord) { record in
+            HistoricalRevisionView(record: record, visit: visit) {
+                voiceRevisionRecord = nil
+            }
+            .tint(.yellow)
+            .preferredColorScheme(.dark)
+        }
     }
 
     private var emptyState: some View {
@@ -55,6 +64,9 @@ struct VisitsHomeView: View {
                     NavigationLink {
                         EstimateView(
                             session: record.session, visitName: record.name, history: history,
+                            // Reopened visits get the SAME workflow as a live visit:
+                            // voice "Make Changes" (in place, same session) + Edit Plan.
+                            onMakeChanges: { voiceRevisionRecord = record },
                             onEditPlan: { payload, pdfStale, vizStale in
                                 Task {
                                     await visit.editHistoricalPlan(
@@ -105,9 +117,15 @@ private struct VisitRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(record.name)
                     .font(.body.weight(.medium))
-                Text(record.date, format: .dateTime.day().month().hour().minute())
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 4) {
+                    Text(record.date, format: .dateTime.day().month().hour().minute())
+                    if (record.revisionCount ?? 0) > 0 {
+                        Text("· Edited")
+                            .foregroundStyle(.yellow.opacity(0.9))
+                    }
+                }
+                .font(.footnote)
+                .foregroundStyle(.secondary)
             }
             Spacer()
             if let quote = record.session.estimate?.suggestedQuotationEur {
@@ -150,6 +168,16 @@ struct SettingsSheet: View {
                 consumablesSection
                 quoteSection
                 resetSection
+
+                #if DEBUG
+                Section {
+                    NavigationLink("AR Continuity Spike") { ARContinuitySpikeView() }
+                } header: {
+                    Text("Debug (internal)")
+                } footer: {
+                    Text("Proves live AR poses stay in the scan's world frame after RoomPlan finishes. Not shipped in release builds.")
+                }
+                #endif
 
                 Section {
                     if discovery.macs.isEmpty {

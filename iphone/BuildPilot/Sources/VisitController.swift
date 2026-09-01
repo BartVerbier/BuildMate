@@ -6,6 +6,36 @@ import SwiftUI
 /// subsystem "com.buildpilot.app". Invisible to the painter.
 let visitLog = Logger(subsystem: "com.buildpilot.app", category: "visit")
 
+/// The outcome of applying a spoken change to a reopened visit. Carries a
+/// specific, safe reason so the sheet can tell the painter what actually went
+/// wrong (the generic "couldn't update" hides real problems like a session the
+/// server no longer has). `failureMessage` is nil only on success.
+enum HistoricalRevisionOutcome: Equatable {
+    case success([String])
+    case recordingUnavailable   // no usable audio was captured
+    case serverUnreachable      // backend couldn't be located/reached
+    case visitNotFound          // 404 — the server no longer has this session
+    case couldNotTranscribe     // 422 — no speech / transcription failed
+    case failed                 // anything else
+
+    var failureMessage: String? {
+        switch self {
+        case .success:
+            return nil
+        case .recordingUnavailable:
+            return "The recording didn't capture any audio. Tap Try Again and speak once recording starts."
+        case .serverUnreachable:
+            return "Your backend couldn't be reached. Check your connection and try again."
+        case .visitNotFound:
+            return "This visit's details are no longer on the server, so it can't be edited here. The saved quote on this phone is unchanged."
+        case .couldNotTranscribe:
+            return "That change couldn't be understood. Speak clearly and try again."
+        case .failed:
+            return "The quote couldn't be updated. Your original quote is unchanged."
+        }
+    }
+}
+
 /// The visit state machine: idle → scanning → processing → estimate/failed.
 ///
 /// Reliability rules for real-world use:
@@ -329,6 +359,87 @@ final class VisitController: ObservableObject {
             visitLog.info("Historical plan edited (\(record.id))")
         } catch {
             visitLog.error("Historical plan edit failed (unchanged): \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: - reopened-visit voice editing ("Make Changes" on a historical visit)
+
+    /// Starts recording a spoken change for a reopened historical visit. Same
+    /// mic capture as the live flow, but deliberately NO phase change — the
+    /// reopened screen stays put and refreshes in place, exactly like
+    /// `editHistoricalPlan`. Presentation is the reopened view's own sheet.
+    func beginHistoricalRevision() async -> Bool {
+        guard await audioRecorder.requestPermission() else { return false }
+        do {
+            try audioRecorder.start()
+            visitLog.info("Historical revision recording started")
+            return true
+        } catch {
+            visitLog.error("Historical revision recording failed to start: \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    /// Discards an in-progress historical-revision recording (Cancel, or the
+    /// sheet swiped away). Never leaves the mic running; the quote is untouched.
+    func cancelHistoricalRevision() {
+        _ = audioRecorder.stop()
+    }
+
+    /// Applies the spoken change to a reopened visit through the SAME `/revise`
+    /// pipeline the live flow uses — transcribe → LLM-merge → deterministic
+    /// re-estimate, versioned server-side (original transcript preserved, the
+    /// new instruction appended). Updates the SAME session_id / history entry in
+    /// place (customer, photos, business snapshot and prior versions all carry
+    /// over — no duplicate visit), then marks outputs stale per the existing
+    /// rules WITHOUT auto-regenerating anything. Returns the change summary on
+    /// success, or a specific failure the sheet surfaces to the painter. Emits
+    /// safe diagnostics (session id, file existence/size, request URL, HTTP
+    /// status, error body) — never audio contents, tokens, or transcript text.
+    func applyHistoricalRevision(record: VisitRecord) async -> HistoricalRevisionOutcome {
+        guard let audioFile = audioRecorder.stop() else {
+            visitLog.error("Historical revision: recorder produced no audio file (session=\(record.id))")
+            return .recordingUnavailable
+        }
+        // Confirm the recording is a real, non-empty file before uploading —
+        // an empty upload would fail transcription with a confusing 422.
+        let exists = FileManager.default.fileExists(atPath: audioFile.path)
+        let bytes = (try? FileManager.default.attributesOfItem(atPath: audioFile.path)[.size]) as? Int ?? 0
+        visitLog.info("Historical revision: session=\(record.id) fileExists=\(exists) bytes=\(bytes) ext=\(audioFile.pathExtension)")
+        guard exists, bytes > 0 else {
+            visitLog.error("Historical revision: empty/missing audio (exists=\(exists) bytes=\(bytes))")
+            return .recordingUnavailable
+        }
+        guard let url = await BackendLocator.locate(configuredURLString: backendURLString) else {
+            visitLog.error("Historical revision: no backend URL available")
+            return .serverUnreachable
+        }
+        visitLog.info("Historical revision: POST \(url.absoluteString)/sessions/\(record.id)/revise")
+        do {
+            let result = try await HTTPBackendClient(baseURL: url)
+                .revise(sessionID: record.id, audioFile: audioFile)
+            // customer nil → the existing record's customer/photos/snapshot/state
+            // carry over; only the session content is replaced (same id).
+            history.add(name: record.name, session: result.session)
+            // A voice change is quote-relevant → the PDF is stale; renders are
+            // stale only when the backend says so. Never auto-regenerate.
+            history.markStale(pdf: true, visualization: result.renderRequired, for: record.id)
+            lastChanges = result.changes
+            visitLog.info("Historical revision applied (\(record.id)): \(result.changes.count) change(s)")
+            return .success(result.changes)
+        } catch HTTPBackendClient.UploadError.badStatus(let code, let body) {
+            visitLog.error("Historical revision failed: HTTP \(code) body=\(body.prefix(160))")
+            switch code {
+            case 404: return .visitNotFound
+            case 422: return .couldNotTranscribe
+            default: return .failed
+            }
+        } catch let urlError as URLError {
+            visitLog.error("Historical revision transport failure: URLError \(urlError.code.rawValue)")
+            return .serverUnreachable
+        } catch {
+            visitLog.error("Historical revision failed: \(error.localizedDescription)")
+            return .failed
         }
     }
 

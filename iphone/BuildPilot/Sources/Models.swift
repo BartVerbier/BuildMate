@@ -131,7 +131,32 @@ struct RequirementExtraction: Codable {
     let paintScope: PaintScope
     // Walls being painted, by wall id; empty/absent = all walls.
     let paintedWallIds: [String]?
+    // The customer's own words for a wall the backend could NOT map to a
+    // wall id (post-scan revisions have no gaze context). When set and
+    // paintedWallIds is empty, the quote covers ALL walls despite a
+    // specific-wall request — surfaced loudly until walls are chosen.
+    var unresolvedWallReference: String? = nil
     let transcriptAvailable: Bool
+}
+
+/// The whole-room-fallback warning: active when a specific-wall request
+/// could not be grounded and the quote therefore covers ALL walls. Clears
+/// itself the moment painted walls are actually chosen (Edit Plan).
+enum WallScopeAlert {
+    static func reference(for requirements: RequirementExtraction?) -> String? {
+        guard let requirements,
+              let reference = requirements.unresolvedWallReference,
+              (requirements.paintedWallIds ?? []).isEmpty
+        else { return nil }
+        return reference
+    }
+
+    /// TBD/PLACEHOLDER COPY — needs a copy pass.
+    static func message(for requirements: RequirementExtraction?) -> String? {
+        reference(for: requirements).map {
+            "Couldn't match “\($0)” to a specific wall — this quote covers the WHOLE ROOM."
+        }
+    }
 }
 
 extension SessionResponse {

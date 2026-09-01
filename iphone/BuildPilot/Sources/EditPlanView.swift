@@ -222,8 +222,14 @@ struct EditPlanView: View {
         let notesChanged = lines(notesText) != originalNotes
         let verifiedChanged = verified != originalVerified
 
+        // While the whole-room-fallback alert is active (an ungrounded
+        // "paint only the wall with…" request), saving this sheet IS the
+        // resolution: the painter is explicitly choosing the wall(s), so a
+        // save must always go through — even if nothing was toggled.
+        let resolvingWallScope = WallScopeAlert.reference(for: session.requirements) != nil
         let anyChange = wallsChanged || ceilingChanged || openingsChanged || coatsChanged
             || scopeChanged || includedChanged || prepChanged || notesChanged || verifiedChanged
+            || resolvingWallScope
         guard anyChange else { onSave(nil, false, false); dismiss(); return }
 
         var payload = PlanEditPayload()
@@ -237,7 +243,13 @@ struct EditPlanView: View {
         if windowArea != originalWindow { payload.windowAreaM2 = windowArea }
         if coatsChanged { payload.coats = coats }
         if scopeChanged { payload.paintScope = PaintScope(walls: paintWalls, ceiling: paintCeiling) }
-        if includedChanged {
+        if resolvingWallScope {
+            // Resolving an ungrounded wall reference: send the selection
+            // EXPLICITLY, including "all walls" as the full id list — the
+            // usual empty-means-all shorthand would be indistinguishable
+            // from the unresolved state and leave the alert stuck on.
+            payload.paintedWallIds = Array(included)
+        } else if includedChanged {
             // Empty = all walls; send the subset only when not everything is included.
             payload.paintedWallIds = included == allWallIds ? [] : Array(included)
         }

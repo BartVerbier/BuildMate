@@ -1,5 +1,25 @@
 import Foundation
 
+/// A silent visit (nobody described the work) must fail LOUDLY, not render
+/// polished defaults as if a scope had been captured — ConversationSummary
+/// and WorkPlan both paper over an empty extraction with generic wording.
+enum ScopeNotice {
+    /// TBD/PLACEHOLDER COPY — needs a copy pass.
+    static let noScopeCaptured =
+        "No work scope was captured — describe the work being done during the walkthrough so it can be quoted."
+
+    /// The user-facing notice, or nil when a real scope exists. Missing
+    /// requirements and an empty scope-of-work list both qualify: either
+    /// way, every work item shown downstream is a default, not something
+    /// the customer asked for.
+    static func message(for requirements: RequirementExtraction?) -> String? {
+        guard let requirements, !requirements.scopeOfWork.isEmpty else {
+            return noScopeCaptured
+        }
+        return nil
+    }
+}
+
 /// Turns the structured extraction into one natural sentence, e.g.:
 /// "From our conversation today I understand you would like the walls
 ///  painted sage green, while keeping the ceiling as it is."

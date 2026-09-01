@@ -20,6 +20,13 @@ struct ReadbackView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     header
                     if hasConversation {
+                        // A transcript existed but no work scope came out of
+                        // it (silent walkthrough, small talk only): say so
+                        // LOUDLY before the generic default reads as if it
+                        // were the customer's actual request.
+                        if let notice = ScopeNotice.message(for: requirements) {
+                            noScopeCard(notice)
+                        }
                         discussedCard
                     } else {
                         noConversationCard
@@ -64,6 +71,23 @@ struct ReadbackView: View {
                     }
                 }
             }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(20)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+
+    /// Transcript present, scope absent — the walkthrough never described
+    /// the work. TBD copy lives in ScopeNotice.
+    private func noScopeCard(_ notice: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("No work scope captured", systemImage: "exclamationmark.triangle.fill")
+                .font(.body.weight(.semibold))
+                .foregroundStyle(.orange)
+            Text(notice)
+                .font(.callout)
+                .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(20)
