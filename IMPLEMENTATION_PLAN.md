@@ -41,9 +41,15 @@ behind the corpus's evidence before deploying.
   placeholders), onboarding, every error state. Then TestFlight (founder,
   boss, Ariana).
 - **E — App Store structural work:** per-user auth replacing the baked-in
-  shared token (the ContractorResolver seam exists for this); in-app
-  recording-consent step (App Review + EU law); the Build Pilot/BuildMate
-  naming decision; privacy policy, nutrition labels, support page.
+  shared token (the ContractorResolver seam exists for this). Founder
+  direction (2026-09-01): email-based sign-in leading into the setup
+  flow; a company has an administrator who grants access to additional
+  members. Recording consent shipped 2026-09-01 (consent toggle gates
+  Start Visit; confirmation + timestamp uploaded as client metadata).
+  Remaining: the Build Pilot/BuildMate naming decision; privacy policy
+  (draft: docs/PRIVACY_POLICY_DRAFT.md), nutrition labels, support page.
+  Pricing rules for the five Phase B settings under founder review:
+  docs/PRICING_RULES_PROPOSAL.md.
 - **F — Whole-wall before/after:** deliberately last — most expensive, least
   certain, and the one milestone real usage may legitimately resize.
   wall_projection.py (Stage 0) is the validated foundation.
