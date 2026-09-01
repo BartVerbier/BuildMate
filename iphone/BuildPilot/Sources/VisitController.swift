@@ -111,6 +111,9 @@ final class VisitController: ObservableObject {
     /// The audio from the last completed capture, reused by a rescan so the
     /// painter never loses the conversation (unique temp file, not overwritten).
     private var lastAudioFile: URL?
+    /// When the painter confirmed the customer's recording consent —
+    /// uploaded with the visit as evidence the consent step happened.
+    private var recordingConsentAt: Date?
     private var rescanReuseAudio = false
     private var rescanReturnSession: SessionResponse?
     /// The capture screen tells the painter the conversation is being kept.
@@ -120,8 +123,9 @@ final class VisitController: ObservableObject {
 
     // MARK: - visit lifecycle
 
-    func startVisit(customer: CustomerInfo) async {
+    func startVisit(customer: CustomerInfo, recordingConsentAt: Date? = nil) async {
         pendingCustomer = customer
+        self.recordingConsentAt = recordingConsentAt
         draftingNewVisit = false
         await startVisit()
     }
@@ -522,6 +526,16 @@ final class VisitController: ObservableObject {
         return url
     }
 
+    /// The consent record uploaded with every visit (string values only —
+    /// the backend namespaces them client_* into raw_metadata).
+    private func consentMetadata() -> [String: String] {
+        var metadata = ["recording_consent": recordingConsentAt != nil ? "true" : "false"]
+        if let at = recordingConsentAt {
+            metadata["recording_consent_at"] = ISO8601DateFormatter().string(from: at)
+        }
+        return metadata
+    }
+
     private func uploadPendingBundle() async {
         guard let bundle = pendingBundle,
               let url = await BackendLocator.locate(configuredURLString: backendURLString) else {
@@ -533,7 +547,8 @@ final class VisitController: ObservableObject {
         do {
             let session = try await HTTPBackendClient(baseURL: url)
                 .submitVisit(roomScan: bundle.roomJSON, audioFile: bundle.audioFile, poses: bundle.poses,
-                             companyProfile: settings.settings.companyProfile())
+                             companyProfile: settings.settings.companyProfile(),
+                             clientMetadata: consentMetadata())
             visitLog.info("Upload + pipeline finished in \(Date().timeIntervalSince(uploadStarted), format: .fixed(precision: 1))s → \(session.status) (\(session.sessionId))")
             if session.status == "completed" {
                 pendingBundle = nil

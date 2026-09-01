@@ -43,3 +43,15 @@ struct VisitSetupFlow: Equatable {
         step = .lightCheck
     }
 }
+
+
+/// The two gates in front of Start Visit, as one pure rule so it is
+/// unit-testable and cannot quietly regress: the light check must allow it,
+/// and the customer's recording consent must be confirmed (the conversation
+/// is recorded — an App Review requirement and, in much of the EU, a legal
+/// one). Neither gate may ever be bypassed by UI restructuring.
+enum VisitStartRules {
+    static func canStart(lightAllowsStart: Bool, recordingConsentConfirmed: Bool) -> Bool {
+        lightAllowsStart && recordingConsentConfirmed
+    }
+}

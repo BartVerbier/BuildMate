@@ -20,11 +20,15 @@ struct CustomerInfo: Equatable {
 /// 3. Light report — the walk's verdict; Start Visit lives here and is
 ///    disabled while the worst reading is in the dark band.
 struct NewVisitView: View {
-    let onStart: (CustomerInfo) -> Void
+    /// Starts the visit; the Date is when recording consent was confirmed.
+    let onStart: (CustomerInfo, Date) -> Void
     let onCancel: () -> Void
 
     @State private var customer = CustomerInfo()
     @State private var flow = VisitSetupFlow()
+    /// Set the moment the painter confirms the customer agreed to the
+    /// recording; nil until then, and Start Visit stays disabled.
+    @State private var consentConfirmedAt: Date?
     @FocusState private var focusedField: Field?
     @StateObject private var lightGate = LightingGateController()
 
@@ -253,6 +257,30 @@ struct NewVisitView: View {
         .onAppear { lightGate.start() } // NOT earlier — details stay camera-free
     }
 
+    /// Recording consent: the conversation is recorded to draft the
+    /// estimate, and the customer must have agreed out loud before the
+    /// microphone starts. The painter confirms that here; the confirmation
+    /// (with its timestamp) is stored with the visit.
+    private var consentCard: some View {
+        Toggle(isOn: Binding(
+            get: { consentConfirmedAt != nil },
+            set: { consentConfirmedAt = $0 ? Date() : nil }
+        )) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Customer agreed to recording")
+                    .font(.body.weight(.semibold))
+                Text("The visit conversation is recorded to draft the estimate. Ask the customer before starting.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .tint(.green)
+        .padding(14)
+        .background(Color(.secondarySystemBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .accessibilityHint("Required before the visit can start")
+    }
+
     // MARK: - 3. the light report
 
     private var reportScreen: some View {
@@ -270,13 +298,15 @@ struct NewVisitView: View {
 
             Spacer()
 
+            consentCard
+
             VStack(spacing: 10) {
                 Button {
                     // Teardown BEFORE the RoomPlan capture starts — the
                     // sampling ARSession must never overlap the
                     // RoomCaptureSession.
                     lightGate.stop()
-                    onStart(customer)
+                    onStart(customer, consentConfirmedAt ?? Date())
                 } label: {
                     Label("Start Visit", systemImage: "camera.metering.matrix")
                         .font(.title3.weight(.bold))
@@ -285,7 +315,9 @@ struct NewVisitView: View {
                 .buttonStyle(.borderedProminent)
                 .tint(.yellow)
                 .foregroundStyle(.black)
-                .disabled(!lightGate.status.allowsStart)
+                .disabled(!VisitStartRules.canStart(
+                    lightAllowsStart: lightGate.status.allowsStart,
+                    recordingConsentConfirmed: consentConfirmedAt != nil))
 
                 #if DEBUG
                 debugFootnote

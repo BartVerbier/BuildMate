@@ -31,25 +31,27 @@ enum LightThresholds {
     static let warmupTimeoutSeconds: TimeInterval = 4
 }
 
-/// TBD/PLACEHOLDER COPY — needs a copy pass. Tone target: routine and
-/// brisk, not apologetic. Both warn and hold states show this same line;
-/// hold additionally disables Start.
+/// Copy pass 2026-09-01: routine and brisk, a colleague's aside — never
+/// apologetic, never blaming the room or the painter. Both warn and hold
+/// states show the same moreLightNeeded line; hold additionally disables
+/// Start. Founder review folds into the milestone-D finish pass.
 enum LightingGateCopy {
     static let moreLightNeeded =
-        "More light needed to scan accurately — turn on lights or add your work light."
+        "Too dark to scan accurately. Lights on, or grab your work light."
     /// Neutral warm-up line while the first reading settles.
     static let checking = "Checking light…"
     /// Live prompt when the walk hits a dark spot. No spatial description —
     /// this session has no room geometry to name a location with.
-    static let lowSpotHit = "Low light here — try adding light in this area."
+    static let lowSpotHit = "Dark spot here — get some light on it."
     /// Summary when the walk's worst reading stayed in the good band.
-    static let lightGoodThroughout = "Light looks good throughout."
+    static let lightGoodThroughout = "Good light all the way round."
     static let doneChecking = "Done Checking"
     static let checkAgain = "Check Light Again"
     /// Fail-open report line when the check produced no reading at all.
-    static let checkUnavailable = "The light couldn't be checked — you can still start the visit."
+    /// States the fact; a skipped check must not look like a passed one.
+    static let checkUnavailable = "Light check didn't run — you can still start the visit."
     /// Instruction on the dedicated light-check screen.
-    static let walkInstruction = "Walk the room slowly with the phone up — the camera reads the light as you go."
+    static let walkInstruction = "Walk the room slowly with the phone up — it reads the light as you go."
 }
 
 /// The survey's full lifecycle, as the UI must render it. Every state is

@@ -9,7 +9,7 @@ import Foundation
 /// see BackendLocator.
 protocol BackendClient {
     func isReachable() async -> Bool
-    func submitVisit(roomScan: Data, audioFile: URL?, poses: Data?, companyProfile: CompanyProfilePayload?) async throws -> SessionResponse
+    func submitVisit(roomScan: Data, audioFile: URL?, poses: Data?, companyProfile: CompanyProfilePayload?, clientMetadata: [String: String]?) async throws -> SessionResponse
 }
 
 /// HTTP implementation of the Build Pilot backend API
@@ -60,7 +60,7 @@ struct HTTPBackendClient: BackendClient {
         }
     }
 
-    func submitVisit(roomScan: Data, audioFile: URL?, poses: Data? = nil, companyProfile: CompanyProfilePayload? = nil) async throws -> SessionResponse {
+    func submitVisit(roomScan: Data, audioFile: URL?, poses: Data? = nil, companyProfile: CompanyProfilePayload? = nil, clientMetadata: [String: String]? = nil) async throws -> SessionResponse {
         var request = authorizedRequest(url: baseURL.appendingPathComponent("sessions"))
         request.httpMethod = "POST"
         // Transcription on the backend can take a while for long visits; the
@@ -86,6 +86,13 @@ struct HTTPBackendClient: BackendClient {
         // — later settings changes never touch it. Malformed → server default.
         if let companyProfile, let json = companyProfile.jsonData() {
             appendField(&body, boundary: boundary, name: "company_profile",
+                        value: String(decoding: json, as: UTF8.self))
+        }
+        // Small string-only visit facts (recording consent, etc.). Backends
+        // without the field simply never parse it.
+        if let clientMetadata, !clientMetadata.isEmpty,
+           let json = try? JSONEncoder().encode(clientMetadata) {
+            appendField(&body, boundary: boundary, name: "client_metadata",
                         value: String(decoding: json, as: UTF8.self))
         }
         body.append(Data("--\(boundary)--\r\n".utf8))

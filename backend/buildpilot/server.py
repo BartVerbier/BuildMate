@@ -28,7 +28,7 @@ from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from buildpilot.auth import auth_enabled, require_token
 from buildpilot.config import DEFAULT_COMPANY_PROFILE
 from buildpilot.identity import Contractor, ContractorResolver, current_contractor
-from buildpilot.models.session import MeasurementCompleteness, PlanEdit
+from buildpilot.models.session import CompanyProfile, MeasurementCompleteness, PlanEdit
 from buildpilot.pipeline import VisitPipeline
 from buildpilot.pipelines.confidence import score_measurement
 from buildpilot.pipelines.estimator import DeterministicEstimator
@@ -163,6 +163,8 @@ def create_app(
         room_scan: UploadFile = File(...),
         audio: Optional[UploadFile] = File(None),
         poses: Optional[UploadFile] = File(None),
+        company_profile: Optional[str] = Form(None),
+        client_metadata: Optional[str] = Form(None),
         contractor: Contractor = Depends(current_contractor),
     ) -> dict:
         room_bytes = await room_scan.read()
@@ -196,6 +198,37 @@ def create_app(
         session = app.state.store.create_session(
             room_bytes, audio_bytes, contractor_id=contractor.contractor_id
         )
+
+        # The contractor's pricing snapshot (Phase B settings). Frozen onto
+        # the session BEFORE the pipeline runs so this visit is priced by
+        # these numbers forever — later settings changes never touch it.
+        # Malformed -> server defaults with a visible note, never a failed
+        # visit. Unknown fields are ignored (the app may be newer).
+        if company_profile:
+            try:
+                session.company_profile = CompanyProfile.model_validate_json(
+                    company_profile
+                )
+            except Exception:
+                session.raw_metadata["company_profile_error"] = (
+                    "invalid company profile from app; server defaults used"
+                )
+
+        # Small, string-only facts the app records about the visit (e.g. the
+        # recording-consent confirmation). Keys are namespaced client_* so
+        # they can never clobber pipeline keys. Malformed/oversized -> dropped
+        # silently, same policy as a bad pose log.
+        if client_metadata and len(client_metadata) <= 4096:
+            try:
+                parsed_meta = json.loads(client_metadata)
+                if isinstance(parsed_meta, dict):
+                    for key, value in list(parsed_meta.items())[:20]:
+                        if isinstance(key, str) and isinstance(value, str) and len(value) <= 200:
+                            safe = key if key.startswith("client_") else f"client_{key}"
+                            session.raw_metadata[safe] = value
+            except (ValueError, UnicodeDecodeError):
+                pass
+
         if poses_list is not None:
             app.state.store.write_artifact(
                 session, POSES_FILE, json.dumps(poses_list)

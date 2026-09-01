@@ -166,4 +166,13 @@ final class WallScopeAlertTests: XCTestCase {
     func testMissingRequirementsRaiseNoAlert() {
         XCTAssertNil(WallScopeAlert.message(for: nil))
     }
+
+    // MARK: - the Start Visit gates
+
+    func testStartRequiresBothLightAndConsent() {
+        XCTAssertTrue(VisitStartRules.canStart(lightAllowsStart: true, recordingConsentConfirmed: true))
+        XCTAssertFalse(VisitStartRules.canStart(lightAllowsStart: true, recordingConsentConfirmed: false))
+        XCTAssertFalse(VisitStartRules.canStart(lightAllowsStart: false, recordingConsentConfirmed: true))
+        XCTAssertFalse(VisitStartRules.canStart(lightAllowsStart: false, recordingConsentConfirmed: false))
+    }
 }

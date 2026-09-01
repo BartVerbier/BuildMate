@@ -32,7 +32,7 @@ struct ContentView: View {
     private var visitFlow: some View {
         if visit.draftingNewVisit {
             NewVisitView(
-                onStart: { customer in Task { await visit.startVisit(customer: customer) } },
+                onStart: { customer, consentAt in Task { await visit.startVisit(customer: customer, recordingConsentAt: consentAt) } },
                 onCancel: { visit.draftingNewVisit = false }
             )
             .tint(.yellow)

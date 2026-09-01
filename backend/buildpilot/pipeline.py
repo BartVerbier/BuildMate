@@ -173,9 +173,12 @@ class VisitPipeline:
 
         # 4. Deterministic estimation (never AI)
         with self._timed(session, "estimate"):
-            session.company_profile = self.company_profile
+            # A profile frozen onto the session at upload (the contractor's
+            # own pricing) wins over the server default.
+            profile = session.company_profile or self.company_profile
+            session.company_profile = profile
             session.estimate = self.estimator.estimate(
-                session.measurements, session.requirements, self.company_profile
+                session.measurements, session.requirements, profile
             )
         session.status = SessionStatus.COMPLETED
         session.updated_at = datetime.now(timezone.utc)
