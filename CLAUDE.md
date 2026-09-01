@@ -66,6 +66,18 @@ BUILDPILOT_RUN_WHISPER_TESTS=1 ../.venv/bin/python -m pytest
 
 # Exercise the pipeline without a phone
 curl -F "room_scan=@tests/fixtures/synthetic_room_5x3.json" http://localhost:8787/sessions
+
+# Ground-truth workflow (docs/GROUND_TRUTH_PROTOCOL.md): archive a visit's
+# raw scan from production and scaffold its laser-truth record
+../.venv/bin/python tools/pull_scan.py list
+../.venv/bin/python tools/pull_scan.py pull --latest      # or pull <visit-id>
+
+# The milestone-A accuracy readout (laser truth vs engine, honesty check)
+../.venv/bin/python tools/accuracy_report.py
+
+# Regenerate the Swift wall-loop pins after changing either side's geometry
+# (WallLoop.swift or measurement.py) — keeps the port and backend in lockstep
+../.venv/bin/python tools/gen_wallloop_fixtures.py
 ```
 
 iOS app (requires Xcode + a LiDAR iPhone — the Simulator cannot run RoomPlan):

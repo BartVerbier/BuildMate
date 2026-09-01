@@ -175,4 +175,14 @@ final class WallLoopRealScanTests: XCTestCase {
         XCTAssertEqual(result.dups, [])
     }
 
+    func test_visit_20260821_082357_e7241a() {  // backend: incomplete
+        let walls = [
+            wall(0.247319, 0.000000, -0.968934, -2.130405, -0.426364, -1.462763, w: 1.036109, h: 2.477143),
+            wall(0.968934, 0.000000, 0.247319, 0.858395, -0.426364, -1.234540, w: 5.904789, h: 2.477143),
+        ]
+        let result = assess(walls)
+        XCTAssertEqual(result.open, 2)
+        XCTAssertEqual(result.dups, [])
+    }
+
 }

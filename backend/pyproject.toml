@@ -42,3 +42,8 @@ buildpilot = ["console.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+filterwarnings = [
+    # starlette's TestClient announces an httpx->httpx2 migration; we follow
+    # when fastapi does. Pinned to the exact message so real warnings surface.
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated",
+]

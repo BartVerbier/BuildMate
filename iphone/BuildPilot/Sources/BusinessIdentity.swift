@@ -17,6 +17,17 @@ struct BusinessIdentity {
     var currencyCode: String
     var terms: String
     var logo: UIImage?
+    /// Days the quote stays valid from the day the PDF is issued (Settings →
+    /// Business). Historical snapshots from before this field default to 30.
+    var quoteValidityDays: Int = 30
+
+    /// The "valid until" date for a PDF issued today. nil when validity is
+    /// switched off (0 days) — the PDF then prints no expiry line.
+    var validUntil: Date? {
+        quoteValidityDays > 0
+            ? Calendar.current.date(byAdding: .day, value: quoteValidityDays, to: Date())
+            : nil
+    }
 
     static let defaultTerms = BusinessSettings.defaultTerms
 
@@ -56,7 +67,8 @@ struct BusinessIdentity {
             companyName: b.companyName, painterName: b.contactName,
             phone: b.phone, email: b.email, website: b.website, address: b.address,
             vatNumber: b.vatNumber, currencyCode: b.currencyCode,
-            terms: b.paymentTerms, logo: currentLogo
+            terms: b.paymentTerms, logo: currentLogo,
+            quoteValidityDays: b.quoteValidityDays
         )
     }
 

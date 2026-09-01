@@ -1,0 +1,28 @@
+{
+  "visit_id": "visit-20260821-082357-e7241a",
+  "scan_pattern": "",
+  "room_label": "",
+  "notes": "",
+  "laser": {
+    "walls_m": [],
+    "ceiling_height_m": [],
+    "openings": [],
+    "built_ins": []
+  },
+  "conditions": {
+    "flooring": "",
+    "mirrors_or_glass": false,
+    "dark_or_gloss_walls": false,
+    "brightness": "",
+    "furniture_density": ""
+  },
+  "painter_estimate": {
+    "paintable_area_m2": null,
+    "prep_hours": null,
+    "protection_hours": null,
+    "total_hours": null,
+    "materials_eur": null,
+    "quoted_price_eur": null,
+    "comment": ""
+  }
+}

@@ -65,10 +65,18 @@ def configure_logging() -> Path:
     root = sessions_root()
     root.mkdir(parents=True, exist_ok=True)
     log_file = root / "buildpilot.log"
+    # Rotating: the log lives on the persistent sessions volume in
+    # production and would otherwise grow without bound — a full disk fails
+    # a visit mid-upload. 5 MB x 3 backups is weeks of field diagnostics.
+    from logging.handlers import RotatingFileHandler
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
-        handlers=[logging.StreamHandler(), logging.FileHandler(log_file)],
+        handlers=[
+            logging.StreamHandler(),
+            RotatingFileHandler(log_file, maxBytes=5_000_000, backupCount=3),
+        ],
     )
     return log_file
 

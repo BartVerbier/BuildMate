@@ -318,6 +318,9 @@ private struct SummaryPage: View {
             Divide()
             HStack {
                 Text("Draft quotation — advisory and subject to final confirmation.")
+                if let until = identity.validUntil {
+                    Text("· Valid until \(until.formatted(date: .abbreviated, time: .omitted))")
+                }
                 Spacer()
                 Text("Prepared with BuildMate")
             }

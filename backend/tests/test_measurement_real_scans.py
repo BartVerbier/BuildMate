@@ -43,7 +43,10 @@ def _measure(room: dict):
 
 
 def test_fixture_set_is_complete():
-    assert len(SCANS) == 14
+    # A deletion guard, not a cap: the corpus GROWS as tools/pull_scan.py
+    # archives new field visits (14 was the July 2026 baseline). Shrinking
+    # below the baseline means real evidence went missing.
+    assert len(SCANS) >= 14
 
 
 def test_no_fabricated_wall_area(scan):

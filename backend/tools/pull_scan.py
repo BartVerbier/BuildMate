@@ -6,6 +6,7 @@ The bridge between a job site and the accuracy harness
 
     python tools/pull_scan.py list             # today's visits, newest first
     python tools/pull_scan.py pull <visit-id>  # archive scan + scaffold truth
+    python tools/pull_scan.py pull --latest    # ...the newest visit, no ID needed
 
 `pull` writes the verbatim CapturedRoom JSON to
 tests/fixtures/real_scans/<visit-id>.json and scaffolds
@@ -140,10 +141,25 @@ def cmd_pull(visit_id: str) -> int:
     return 0
 
 
+def _latest_visit_id() -> str | None:
+    with _client() as client:
+        response = client.get("/sessions")
+        response.raise_for_status()
+        sessions = response.json()
+    return sessions[0].get("session_id") if sessions else None
+
+
 def main() -> int:
     args = sys.argv[1:]
     if args[:1] == ["list"]:
         return cmd_list()
+    if args == ["pull", "--latest"]:
+        visit_id = _latest_visit_id()
+        if not visit_id:
+            print("No sessions on the backend.", file=sys.stderr)
+            return 1
+        print(f"latest: {visit_id}")
+        return cmd_pull(visit_id)
     if args[:1] == ["pull"] and len(args) == 2:
         return cmd_pull(args[1])
     print(__doc__.strip(), file=sys.stderr)

@@ -146,7 +146,7 @@ function segment(surface) {
   const half = d[0] / 2, x = c[0], t = c[3];
   return [[t[0] - half*x[0], t[2] - half*x[2]], [t[0] + half*x[0], t[2] + half*x[2]]];
 }
-function floorPlan(room) {
+function floorPlan(room, measurement) {
   if (!room) return '<div class="muted">No room scan on this session.</div>';
   const walls = (room.walls || []).map(segment).filter(Boolean);
   if (!walls.length) return '<div class="muted">Scan contains no wall geometry.</div>';
@@ -159,15 +159,26 @@ function floorPlan(room) {
     `<line x1="${seg[0][0]}" y1="${seg[0][1]}" x2="${seg[1][0]}" y2="${seg[1][1]}"
        stroke="${color}" stroke-width="${w}" stroke-linecap="round"/>`;
   const colors = {doors: "#ffb340", windows: "#64b5ff", openings: "#9aa39d"};
+  // Open wall ends (Decision 34): where the loop failed to close, drawn
+  // exactly where they are — the same world x/z frame as the walls.
+  const gaps = (measurement && measurement.completeness &&
+                measurement.completeness.open_edges) || [];
+  const gapMarks = gaps.map(g =>
+    `<circle cx="${g.position_m[0]}" cy="${g.position_m[1]}" r="0.16"
+       fill="none" stroke="#e5484d" stroke-width="0.06"/>
+     <circle cx="${g.position_m[0]}" cy="${g.position_m[1]}" r="0.03" fill="#e5484d"/>`
+  ).join("");
   return `<svg class="plan" viewBox="${minX} ${minZ} ${maxX-minX} ${maxZ-minZ}">
       ${walls.map(seg => line(seg, "#e8ebe9", 0.09)).join("")}
       ${openings.map(o => line(o.seg, colors[o.kind], 0.13)).join("")}
+      ${gapMarks}
     </svg>
     <div class="muted" style="font-size:12px;margin-top:8px">
       Top-down floor plan from the RoomPlan scan (metres).
       <span style="color:#ffb340">■</span> doors
       <span style="color:#64b5ff">■</span> windows
-      <span style="color:#9aa39d">■</span> openings
+      <span style="color:#9aa39d">■</span> openings${
+        gaps.length ? ' · <span style="color:#e5484d">◎</span> open wall end' : ""}
     </div>`;
 }
 
@@ -186,7 +197,7 @@ function render(s, transcript, room) {
     <div class="grid">
       <div class="col">
         <div class="card"><h3>Processing pipeline</h3>${pipeline(s)}</div>
-        <div class="card"><h3>Room preview</h3>${floorPlan(room)}</div>
+        <div class="card"><h3>Room preview</h3>${floorPlan(room, m)}</div>
         ${m ? `<div class="card"><h3>Measurements</h3><table>
           <tr><td>Net wall area</td><td class="num">${m.net_wall_area_m2.toFixed(1)} m²</td></tr>
           <tr><td>Ceiling area</td><td class="num">${m.ceiling_area_m2.toFixed(1)} m²</td></tr>
