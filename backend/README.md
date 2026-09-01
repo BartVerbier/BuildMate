@@ -47,8 +47,15 @@ links. It refreshes automatically as visits arrive from the phone.
 
 - `GET /` — the Mac console (local web dashboard)
 - `GET /health` — status + stage availability
-- `POST /sessions` — multipart (`room_scan` JSON, optional `audio` m4a);
+- `POST /sessions` — multipart (`room_scan` JSON, optional `audio` m4a,
+  optional `poses` JSON, optional `company_profile` JSON — the contractor's
+  pricing, frozen onto the session, malformed → defaults + note — and
+  optional `client_metadata`, a string-only JSON object namespaced
+  `client_*` into raw_metadata, e.g. the recording-consent confirmation);
   runs the pipeline synchronously and returns the completed session
+- `POST /sessions/{id}/reestimate` — deterministic manual plan corrections
+  (Edit Plan): wall/scope edits, coats, on-site verification; versions the
+  prior state and answers in /revise's shape
 - `GET /sessions` — all sessions, newest first
 - `GET /sessions/{id}` — re-fetch (recovery after a dropped connection)
 - `GET /sessions/{id}/room` — the CapturedRoom JSON, verbatim

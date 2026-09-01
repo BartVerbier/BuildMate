@@ -24,9 +24,11 @@ iPhone                           Backend (FastAPI, port 8787 / Railway $PORT)
 Start Visit
   ├─ Customer form (name +       POST /sessions  (multipart)
   │   address required, D24)       room_scan  = CapturedRoom JSON (required)
-  ├─ RoomCaptureSession            audio      = visit.m4a       (optional)
-  ├─ AVAudioRecorder               poses      = camera pose log (optional)
-  └─ ARKit camera poses                 │
+  ├─ Recording consent gate        audio      = visit.m4a       (optional)
+  ├─ RoomCaptureSession            poses      = camera pose log (optional)
+  ├─ AVAudioRecorder               company_profile = pricing    (optional)
+  └─ ARKit camera poses            client_metadata = consent &c (optional)
+                                        │
 Finish Visit                            ▼      Bearer-token gate (auth.py):
   ├─ CapturedRoom → JSON         every request but /health needs the token
   ├─ visit.m4a                   when BUILDPILOT_API_TOKEN is set; no-op locally
