@@ -29,7 +29,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from fastapi import Request
+import os
+
+from fastapi import HTTPException, Request
 
 from buildpilot.models.session import DEFAULT_CONTRACTOR_ID
 
@@ -73,7 +75,20 @@ class ContractorResolver:
 
     def resolve(self, request: Request) -> Contractor:
         raw = request.headers.get(CONTRACTOR_HEADER)
-        return Contractor(contractor_id=normalize_contractor_id(raw))
+        contractor_id = normalize_contractor_id(raw)
+        # Optional hardening for public deployments (Codex review
+        # 2026-09-01): the header is client-controlled, so with a single
+        # shared bearer token any caller could route as any contractor id.
+        # BUILDPILOT_KNOWN_CONTRACTORS (comma-separated) turns unknown ids
+        # into 403s. Unset preserves V1 behavior; milestone E replaces this
+        # whole mechanism with credential-derived identity.
+        allowed = os.environ.get("BUILDPILOT_KNOWN_CONTRACTORS")
+        if allowed:
+            known = {normalize_contractor_id(a) for a in allowed.split(",") if a.strip()}
+            known.add(DEFAULT_CONTRACTOR_ID)
+            if contractor_id not in known:
+                raise HTTPException(403, "Unknown contractor")
+        return Contractor(contractor_id=contractor_id)
 
 
 def current_contractor(request: Request) -> Contractor:

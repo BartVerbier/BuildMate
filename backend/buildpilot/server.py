@@ -322,11 +322,15 @@ def create_app(
         store: SessionStore = app.state.store
         session_dir = store.session_dir(session.session_id)
 
-        # 1. Version the current state before touching anything.
+        # 1. Reserve the version number (artifact filenames use it). The
+        #    version FILE is written only after transcription and extraction
+        #    succeed — a failed revision must not leave a restorable version
+        #    behind (same class of bug Codex found on /reestimate). A retry
+        #    after a failure reuses the number, overwriting the failed
+        #    attempt's audio artifacts, which is exactly right.
         versions_dir = session_dir / "versions"
         versions_dir.mkdir(exist_ok=True)
         version = len(list(versions_dir.glob("v*.json"))) + 1
-        (versions_dir / f"v{version:02d}.json").write_text(session.model_dump_json(indent=2))
 
         # 2. Transcribe the revision audio.
         audio_bytes = await audio.read()
@@ -350,6 +354,10 @@ def create_app(
             )
         except ExtractionError as exc:
             raise HTTPException(503, f"Revision unavailable: {exc}")
+
+        # Every failure path is behind us: NOW snapshot the pre-change state.
+        (versions_dir / f"v{version:02d}.json").write_text(session.model_dump_json(indent=2))
+
         # Hard constraint (same as the pipeline): only walls that exist.
         if session.measurements:
             known = {w.wall_id for w in session.measurements.walls}
@@ -426,7 +434,16 @@ def create_app(
         m = session.measurements
         changes: list[str] = []
 
-        # 1. Version the current state before touching anything (same idiom
+        # 1. Validate EVERYTHING that can fail before versioning — a rejected
+        #    edit must leave no trace (Codex review 2026-09-01: a 422 after
+        #    the version write left a spurious restorable version behind).
+        by_id = {w.wall_id: w for w in m.walls}
+        if edit.walls:
+            unknown = [we.wall_id for we in edit.walls if we.wall_id not in by_id]
+            if unknown:
+                raise HTTPException(422, f"Unknown wall id(s): {', '.join(unknown)}")
+
+        # 2. Version the current state before touching anything (same idiom
         #    and numbering as /revise — the two share one history).
         store: SessionStore = app.state.store
         versions_dir = store.session_dir(session.session_id) / "versions"
@@ -434,14 +451,10 @@ def create_app(
         version = len(list(versions_dir.glob("v*.json"))) + 1
         (versions_dir / f"v{version:02d}.json").write_text(session.model_dump_json(indent=2))
 
-        # 2. Wall edits: recompute each edited wall, then re-derive the room
+        # 3. Wall edits: recompute each edited wall, then re-derive the room
         #    totals from the (non-duplicate) breakdown so they reconcile.
         edits_applied = 0
         if edit.walls:
-            by_id = {w.wall_id: w for w in m.walls}
-            unknown = [we.wall_id for we in edit.walls if we.wall_id not in by_id]
-            if unknown:
-                raise HTTPException(422, f"Unknown wall id(s): {', '.join(unknown)}")
             for we in edit.walls:
                 wall = by_id[we.wall_id]
                 if we.width_m is not None:
