@@ -58,7 +58,23 @@ struct ScanReviewView: View {
             Text("Your scan from above — the red rings are where the walls don't meet.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
+            Text(contextLine)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
         }
+    }
+
+    /// The concrete facts behind the verdict, in one line: how many walls
+    /// counted, and whether split surfaces were merged rather than treated
+    /// as gaps.
+    private var contextLine: String {
+        let merged = WallLoop.duplicates(visit.scanReviewFootprints).count
+        var line = "\(wallCount) wall\(wallCount == 1 ? "" : "s") scanned"
+        if merged > 0 {
+            line += " · \(merged) split surface\(merged == 1 ? "" : "s") merged"
+        }
+        line += " · \(openEnds.count) open end\(openEnds.count == 1 ? "" : "s")"
+        return line
     }
 
     private var gapList: some View {

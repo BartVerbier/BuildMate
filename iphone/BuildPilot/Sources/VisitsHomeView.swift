@@ -108,10 +108,17 @@ struct VisitsHomeView: View {
 private struct VisitRow: View {
     let record: VisitRecord
 
+    /// Decision 34 surfaced in the list too: a visit whose estimate is not
+    /// quotable must not sit behind the same reassuring checkmark as a
+    /// finished one.
+    private var needsCheck: Bool {
+        record.session.estimate?.isQuotable == false
+    }
+
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(.yellow)
+            Image(systemName: needsCheck ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                .foregroundStyle(needsCheck ? .orange : .yellow)
                 .font(.title3)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
@@ -119,7 +126,10 @@ private struct VisitRow: View {
                     .font(.body.weight(.medium))
                 HStack(spacing: 4) {
                     Text(record.date, format: .dateTime.day().month().hour().minute())
-                    if (record.revisionCount ?? 0) > 0 {
+                    if needsCheck {
+                        Text("· Check needed")
+                            .foregroundStyle(.orange)
+                    } else if (record.revisionCount ?? 0) > 0 {
                         Text("· Edited")
                             .foregroundStyle(.yellow.opacity(0.9))
                     }
