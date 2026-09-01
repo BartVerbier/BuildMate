@@ -28,7 +28,9 @@ from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from buildpilot.auth import auth_enabled, require_token
 from buildpilot.config import DEFAULT_COMPANY_PROFILE
 from buildpilot.identity import Contractor, ContractorResolver, current_contractor
+from buildpilot.models.session import MeasurementCompleteness, PlanEdit
 from buildpilot.pipeline import VisitPipeline
+from buildpilot.pipelines.confidence import score_measurement
 from buildpilot.pipelines.estimator import DeterministicEstimator
 from buildpilot.pipelines.extraction import ClaudeRequirementsExtractor
 from buildpilot.pipelines.measurement import RoomPlanMeasurementEngine
@@ -359,6 +361,148 @@ def create_app(
         photos_dir = session_dir / "photos"
         before_photos = sorted(photos_dir.glob("before-*.jpg")) if photos_dir.exists() else []
 
+        return {
+            "session": session.model_dump(mode="json"),
+            "changes": changes,
+            "version": version + 1,
+            "render_required": bool(before_photos),
+        }
+
+    @app.post("/sessions/{session_id}/reestimate")
+    def reestimate(
+        session_id: str,
+        edit: PlanEdit,
+        contractor: Contractor = Depends(current_contractor),
+    ) -> dict:
+        """Manual plan corrections from the Edit Plan screen. Deterministic —
+        no AI anywhere on this path.
+
+        Applies the painter's measurement/scope edits, keeps the per-wall
+        breakdown and the room totals reconciled (Decision 34: they must never
+        diverge), records the on-site verification that clears the
+        completeness gate, versions the prior state exactly like /revise, and
+        re-runs the deterministic estimator. Response shape matches /revise so
+        the phone shares one decoder.
+        """
+        session = _load_or_404(session_id, contractor.contractor_id)
+        if session.measurements is None or session.requirements is None or session.estimate is None:
+            raise HTTPException(409, "Session has no completed quote to edit")
+        if edit.model_dump(exclude_none=True) == {}:
+            raise HTTPException(400, "Empty edit")
+
+        m = session.measurements
+        changes: list[str] = []
+
+        # 1. Version the current state before touching anything (same idiom
+        #    and numbering as /revise — the two share one history).
+        store: SessionStore = app.state.store
+        versions_dir = store.session_dir(session.session_id) / "versions"
+        versions_dir.mkdir(exist_ok=True)
+        version = len(list(versions_dir.glob("v*.json"))) + 1
+        (versions_dir / f"v{version:02d}.json").write_text(session.model_dump_json(indent=2))
+
+        # 2. Wall edits: recompute each edited wall, then re-derive the room
+        #    totals from the (non-duplicate) breakdown so they reconcile.
+        edits_applied = 0
+        if edit.walls:
+            by_id = {w.wall_id: w for w in m.walls}
+            unknown = [we.wall_id for we in edit.walls if we.wall_id not in by_id]
+            if unknown:
+                raise HTTPException(422, f"Unknown wall id(s): {', '.join(unknown)}")
+            for we in edit.walls:
+                wall = by_id[we.wall_id]
+                if we.width_m is not None:
+                    wall.width_m = we.width_m
+                if we.height_m is not None:
+                    wall.height_m = we.height_m
+                if we.opening_area_m2 is not None:
+                    wall.opening_area_m2 = we.opening_area_m2
+                wall.gross_area_m2 = round(wall.width_m * wall.height_m, 2)
+                wall.net_area_m2 = round(max(wall.gross_area_m2 - wall.opening_area_m2, 0.0), 2)
+                edits_applied += 1
+                changes.append(
+                    f"Wall {wall.wall_id} set to {wall.width_m:.2f} x "
+                    f"{wall.height_m:.2f} m ({wall.net_area_m2:.2f} m2 paintable)"
+                )
+            counted = [w for w in m.walls if w.duplicate_of is None]
+            m.gross_wall_area_m2 = round(sum(w.gross_area_m2 for w in counted), 2)
+            m.net_wall_area_m2 = round(sum(w.net_area_m2 for w in counted), 2)
+
+        if edit.ceiling_area_m2 is not None:
+            m.ceiling_area_m2 = round(edit.ceiling_area_m2, 2)
+            edits_applied += 1
+            changes.append(f"Ceiling area set to {m.ceiling_area_m2:.2f} m2")
+        if edit.door_area_m2 is not None:
+            m.door_area_m2 = round(edit.door_area_m2, 2)
+            edits_applied += 1
+            changes.append(f"Door area set to {m.door_area_m2:.2f} m2")
+        if edit.window_area_m2 is not None:
+            m.window_area_m2 = round(edit.window_area_m2, 2)
+            edits_applied += 1
+            changes.append(f"Window area set to {m.window_area_m2:.2f} m2")
+        m.paintable_surface_area_m2 = round(m.net_wall_area_m2 + m.ceiling_area_m2, 2)
+
+        # 3. On-site verification -> the completeness gate's human override.
+        #    Never invents a completeness block for legacy sessions that were
+        #    measured before Decision 34 — there is nothing to confirm against.
+        if edit.measurements_verified is not None and m.completeness is not None:
+            if m.completeness.human_confirmed != edit.measurements_verified:
+                m.completeness.human_confirmed = edit.measurements_verified
+                changes.append(
+                    "Measurements verified on site"
+                    if edit.measurements_verified
+                    else "On-site verification withdrawn"
+                )
+
+        # 4. Requirements / scope edits (all deterministic assignments).
+        r = session.requirements
+        if edit.paint_scope is not None:
+            r.paint_scope = edit.paint_scope
+            changes.append(
+                f"Scope: walls {'in' if r.paint_scope.walls else 'out'}, "
+                f"ceiling {'in' if r.paint_scope.ceiling else 'out'}"
+            )
+        if edit.painted_wall_ids is not None:
+            known = {w.wall_id for w in m.walls}
+            r.painted_wall_ids = [i for i in edit.painted_wall_ids if i in known]
+            # The painter picking walls IS the resolution of an unresolved
+            # spoken reference ("the wall with the TV") — clear it.
+            if r.painted_wall_ids and r.unresolved_wall_reference:
+                r.unresolved_wall_reference = None
+            changes.append(
+                "Painting " + (", ".join(r.painted_wall_ids) if r.painted_wall_ids else "all walls")
+            )
+        for field in ("scope_of_work", "exclusions", "preparation_required", "special_notes"):
+            value = getattr(edit, field)
+            if value is not None:
+                setattr(r, field, value)
+        if edit.coats is not None:
+            profile = session.company_profile or app.state.pipeline.company_profile
+            session.company_profile = profile.model_copy(update={"coats": edit.coats})
+            changes.append(f"Coats set to {edit.coats}")
+
+        # 5. Confidence: same engine, now with the manual-edit signal present.
+        #    The scan's own confidence_score is untouched — the app promises
+        #    "the original scan confidence is kept for the record".
+        if edits_applied:
+            previous = int(session.raw_metadata.get("manual_edit_count", "0"))
+            session.raw_metadata["manual_edit_count"] = str(previous + edits_applied)
+        session.confidence = score_measurement(m, session.raw_metadata)
+
+        # 6. Deterministic re-estimate; deltas join the change list.
+        old = session.estimate
+        session.estimate = app.state.pipeline.estimator.estimate(
+            m, r, session.company_profile or app.state.pipeline.company_profile
+        )
+        changes += _estimate_deltas(old, session.estimate)
+        session.raw_metadata["version"] = str(version + 1)
+        from datetime import datetime, timezone
+        session.updated_at = datetime.now(timezone.utc)
+        store.save(session)
+        store.write_artifact(session, "estimate.json", session.estimate.model_dump_json(indent=2))
+
+        photos_dir = store.session_dir(session.session_id) / "photos"
+        before_photos = sorted(photos_dir.glob("before-*.jpg")) if photos_dir.exists() else []
         return {
             "session": session.model_dump(mode="json"),
             "changes": changes,

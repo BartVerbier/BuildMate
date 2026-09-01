@@ -237,6 +237,38 @@ class RequirementExtraction(BaseModel):
     transcript_available: bool = True
 
 
+
+class WallEdit(BaseModel):
+    """One wall's manual correction from the Edit Plan screen."""
+
+    wall_id: str
+    width_m: Optional[float] = Field(default=None, gt=0)
+    height_m: Optional[float] = Field(default=None, gt=0)
+    opening_area_m2: Optional[float] = Field(default=None, ge=0)
+
+
+class PlanEdit(BaseModel):
+    """Manual plan corrections: POST /sessions/{id}/reestimate.
+
+    The deterministic counterpart of a spoken revision — no AI anywhere.
+    Only populated fields are applied. `measurements_verified` maps to
+    completeness.human_confirmed: the painter's on-site confirmation that
+    clears the completeness gate (Decision 34)."""
+
+    walls: Optional[List[WallEdit]] = None
+    ceiling_area_m2: Optional[float] = Field(default=None, ge=0)
+    door_area_m2: Optional[float] = Field(default=None, ge=0)
+    window_area_m2: Optional[float] = Field(default=None, ge=0)
+    paint_scope: Optional[PaintScope] = None
+    painted_wall_ids: Optional[List[str]] = None
+    coats: Optional[int] = Field(default=None, ge=1, le=5)
+    scope_of_work: Optional[List[str]] = None
+    exclusions: Optional[List[str]] = None
+    preparation_required: Optional[List[str]] = None
+    special_notes: Optional[List[str]] = None
+    measurements_verified: Optional[bool] = None
+
+
 class CompanyProfile(BaseModel):
     """Pricing assumptions supplied to the estimator. Hard-coded defaults in V1."""
 
@@ -267,6 +299,13 @@ class EstimateDraft(BaseModel):
     suggested_quotation_eur: float = Field(ge=0)
     currency: str = "EUR"
     assumptions: List[str] = Field(default_factory=list)
+    # Completeness gate (Decision 34, second half): False when the scan did
+    # not capture the whole room and no human has confirmed the measurements.
+    # The numbers above are still computed — the painter needs the scale of
+    # the job to decide whether to rescan — but no surface may present them
+    # as a quotation while quotable is False.
+    quotable: bool = True
+    not_quotable_reason: Optional[str] = None
 
 
 class Session(BaseModel):

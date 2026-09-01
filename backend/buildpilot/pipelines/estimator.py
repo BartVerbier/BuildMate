@@ -147,6 +147,27 @@ class DeterministicEstimator:
                 f"WARNING: low scan confidence ({measurements.confidence_score:.2f}) - verify measurements"
             )
 
+        # Completeness gate (Decision 34, second half): an incomplete scan
+        # prices only the walls it saw — presenting that as a quotation is the
+        # silent half-price failure. The draft still carries the numbers (the
+        # painter needs the scale to decide), but it is not quotable until the
+        # room is rescanned or a human confirms the measurements on site.
+        quotable = True
+        not_quotable_reason = None
+        completeness = measurements.completeness
+        if (
+            completeness is not None
+            and completeness.status != "complete"
+            and not completeness.human_confirmed
+        ):
+            quotable = False
+            not_quotable_reason = (
+                "The scan did not capture the whole room, so this draft prices "
+                "only what was scanned. Rescan the room, or verify the "
+                "measurements on site in Edit Plan, before quoting."
+            )
+            assumptions.append(f"NOT QUOTABLE: {not_quotable_reason}")
+
         return EstimateDraft(
             paint_quantity_litres=paint_litres,
             primer_quantity_litres=primer_litres,
@@ -156,4 +177,6 @@ class DeterministicEstimator:
             suggested_quotation_eur=float(quotation),
             currency=p.currency,
             assumptions=assumptions,
+            quotable=quotable,
+            not_quotable_reason=not_quotable_reason,
         )
