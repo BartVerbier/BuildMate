@@ -491,6 +491,13 @@ def create_app(
         # 3. On-site verification -> the completeness gate's human override.
         #    Never invents a completeness block for legacy sessions that were
         #    measured before Decision 34 — there is nothing to confirm against.
+        if edit.measurements_verified is not None:
+            # Recorded on the measurements themselves too, separately from
+            # the scan's own confidence evidence (never overwritten).
+            m.measurements_verified = edit.measurements_verified
+            session.raw_metadata["quote_readiness"] = (
+                "verified_manually" if edit.measurements_verified else "unverified"
+            )
         if edit.measurements_verified is not None and m.completeness is not None:
             if m.completeness.human_confirmed != edit.measurements_verified:
                 m.completeness.human_confirmed = edit.measurements_verified
@@ -542,6 +549,7 @@ def create_app(
         )
         changes += _estimate_deltas(old, session.estimate)
         session.raw_metadata["version"] = str(version + 1)
+        session.raw_metadata["plan_edited"] = "true"
         from datetime import datetime, timezone
         session.updated_at = datetime.now(timezone.utc)
         store.save(session)

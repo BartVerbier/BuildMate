@@ -25,23 +25,38 @@ from buildpilot.models.session import RequirementExtraction
 DEFAULT_VISUALIZER_MODEL = "gemini-2.5-flash-image"
 DEVELOPER_API_ROOT = "https://generativelanguage.googleapis.com/v1beta"
 
+# gemini-2.5-flash-image on Vertex uses dynamic shared quota and intermittently
+# returns 429 under bursts — e.g. the Preparation render fired straight after
+# the Finished render lands in the same rate-limit window. Retry with
+# exponential backoff rides out that window (and the backoff spaces successive
+# stage calls, so Preparation no longer fails while Finished succeeds).
+_RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
+_VISUALIZE_MAX_ATTEMPTS = 4
+_VISUALIZE_BACKOFF_BASE_S = 3.0  # backoff 3s, 6s, 12s between attempts
+
 
 class VisualizationError(RuntimeError):
     """Raised when the render cannot run; callers degrade gracefully."""
 
 
-# The customer must see the WHOLE work area, not a zoomed-in detail, and it
-# must read as professional architectural photography (Sprint 6, items 2+7).
+# Fidelity over polish: the customer must recognise their OWN room. Earlier
+# wording ("complete walls floor to ceiling", "professional architectural
+# photography", "wide") invited the model to reframe and invent a different
+# room. This enforces a strict in-place edit of the uploaded source photo.
 _FRAMING_RULES = (
-    "FRAMING: Reproduce the source photograph's full field of view — show the "
-    "complete walls from floor to ceiling exactly as framed in the source. "
-    "Never zoom in, never crop tighter than the source image, never change "
-    "the aspect ratio. Vertical lines — wall corners, door frames, window "
-    "frames — must be perfectly straight and plumb, and the true proportions "
-    "of the room must be preserved. The result must look like professional "
-    "architectural photography: wide, level, perspective-correct, with clean, "
-    "even, natural lighting consistent with the original photo. "
-    "Photorealistic only, no artistic reinterpretation."
+    "IN-PLACE EDIT: Treat this strictly as an in-place edit of the uploaded "
+    "source photograph. The output must be the SAME photo, with only the "
+    "requested wall surfaces changed. Keep the identical framing, field of "
+    "view, crop, camera position, angle, and perspective as the source. Do "
+    "NOT reframe, re-crop, zoom in or out, pan, widen, straighten, or extend "
+    "the image, and do NOT generate any wall, area, or object that is not "
+    "already visible in the source. Preserve every existing element exactly as "
+    "in the source: wall geometry and edges, ceiling, floor, windows, doors, "
+    "furniture, fixtures and all visible objects, together with the original "
+    "lighting, shadows, reflections and colour balance. Do NOT invent a "
+    "different room, a different house, a new wall or window layout, or a "
+    "staged architectural-photography composition. Photorealistic only, no "
+    "reinterpretation — the customer must recognise their own room."
 )
 
 _SAME_ROOM_RULES = (
@@ -219,32 +234,60 @@ class GeminiVisualizer:
                 }
             ]
         }
-        try:
-            # Credentials go in headers, never in the URL — URLs leak into
-            # exception messages and logs.
-            response = httpx.post(url, headers=headers, json=body, timeout=90)
-            response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            raise VisualizationError(
-                f"image model returned HTTP {exc.response.status_code}: "
-                f"{exc.response.text[:200]}"
-            ) from None
-        except httpx.HTTPError as exc:
-            raise VisualizationError(
-                f"image model request failed: {type(exc).__name__}"
-            ) from None
+        last_reason = "image model returned no image"
+        for attempt in range(1, _VISUALIZE_MAX_ATTEMPTS + 1):
+            response = None
+            try:
+                # Credentials go in headers, never in the URL — URLs leak into
+                # exception messages and logs.
+                response = httpx.post(url, headers=headers, json=body, timeout=90)
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                status = exc.response.status_code
+                last_reason = (
+                    f"image model returned HTTP {status}: {exc.response.text[:200]}"
+                )
+                # A non-retryable status (e.g. 400/401/403) fails immediately.
+                if status not in _RETRYABLE_STATUS:
+                    raise VisualizationError(last_reason) from None
+                response = None
+            except httpx.HTTPError as exc:
+                last_reason = f"image model request failed: {type(exc).__name__}"
+                response = None
 
-        try:
-            for candidate in response.json().get("candidates", []):
-                for part in candidate.get("content", {}).get("parts", []):
-                    inline = part.get("inline_data") or part.get("inlineData")
-                    if inline and inline.get("data"):
-                        image = base64.b64decode(inline["data"])
-                        logger.info(
-                            "Visualization response in %.1fs: %d kB image",
-                            time.perf_counter() - started, len(image) // 1024,
-                        )
-                        return image
-        except (ValueError, KeyError, TypeError) as exc:
-            raise VisualizationError(f"unexpected image model response: {exc}") from exc
-        raise VisualizationError("image model returned no image")
+            if response is not None:
+                try:
+                    image = self._decode_image(response)
+                except (ValueError, KeyError, TypeError) as exc:
+                    raise VisualizationError(
+                        f"unexpected image model response: {exc}"
+                    ) from exc
+                if image is not None:
+                    logger.info(
+                        "Visualization response in %.1fs: %d kB image (attempt %d)",
+                        time.perf_counter() - started, len(image) // 1024, attempt,
+                    )
+                    return image
+                # 200 with no image part — transient; worth another attempt.
+                last_reason = "image model returned no image"
+
+            if attempt < _VISUALIZE_MAX_ATTEMPTS:
+                backoff = _VISUALIZE_BACKOFF_BASE_S * (2 ** (attempt - 1))
+                logger.warning(
+                    "Visualization %s attempt %d/%d failed (%s) — retrying in %.0fs",
+                    stage, attempt, _VISUALIZE_MAX_ATTEMPTS, last_reason, backoff,
+                )
+                time.sleep(backoff)
+
+        raise VisualizationError(last_reason)
+
+    @staticmethod
+    def _decode_image(response) -> "bytes | None":
+        """Returns the JPEG bytes from the model response, or None if the
+        response carried no inline image part."""
+        for candidate in response.json().get("candidates", []):
+            for part in candidate.get("content", {}).get("parts", []):
+                inline = part.get("inline_data") or part.get("inlineData")
+                if inline and inline.get("data"):
+                    return base64.b64decode(inline["data"])
+        return None

@@ -165,6 +165,12 @@ class RoomMeasurement(BaseModel):
     # on that signal rather than penalising an older session.
     wall_perimeter_ratio: Optional[float] = Field(default=None, ge=0)
     floor_captured: Optional[bool] = None
+    # True when a human manually verified/corrected the measurements on site.
+    # Recorded SEPARATELY so the original RoomPlan confidence_score and notes
+    # (the scan-quality evidence) are never overwritten. For Decision 34
+    # sessions the completeness gate reads completeness.human_confirmed;
+    # /reestimate sets both together.
+    measurements_verified: bool = False
 
 
 class ConfidenceSignal(BaseModel):
@@ -239,7 +245,9 @@ class RequirementExtraction(BaseModel):
 
 
 class WallEdit(BaseModel):
-    """One wall's manual correction from the Edit Plan screen."""
+    """One wall's manual correction from the Edit Plan screen. Only the
+    provided dimensions change; gross/net areas are re-derived
+    deterministically by the backend."""
 
     wall_id: str
     width_m: Optional[float] = Field(default=None, gt=0)
@@ -251,7 +259,8 @@ class PlanEdit(BaseModel):
     """Manual plan corrections: POST /sessions/{id}/reestimate.
 
     The deterministic counterpart of a spoken revision — no AI anywhere.
-    Only populated fields are applied. `measurements_verified` maps to
+    Only populated fields are applied; the backend re-derives areas and
+    re-runs the SAME deterministic estimator. `measurements_verified` maps to
     completeness.human_confirmed: the painter's on-site confirmation that
     clears the completeness gate (Decision 34)."""
 
@@ -286,6 +295,13 @@ class CompanyProfile(BaseModel):
     travel_cost_eur: float = Field(ge=0)
     vat_rate: float = Field(ge=0)
     currency: str = "EUR"
+    # Additive pricing terms (Settings foundation). Every default is a no-op so
+    # quotes snapshotted before these existed remain byte-identical.
+    minimum_charge_eur: float = Field(default=0.0, ge=0)         # floor on the ex-VAT price
+    discount_rate: float = Field(default=0.0, ge=0)             # fraction off the subtotal
+    prep_material_allowance_eur: float = Field(default=0.0, ge=0)   # flat add to materials
+    consumables_allowance_eur: float = Field(default=0.0, ge=0)     # flat add to materials
+    misc_percentage: float = Field(default=0.0, ge=0)          # fraction of materials+labour
 
 
 class EstimateDraft(BaseModel):
