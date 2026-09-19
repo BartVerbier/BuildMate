@@ -206,10 +206,56 @@ extension RoomCaptureController: RoomCaptureViewDelegate {
             onFinalResult?(.failure(error))
             return
         }
+
+        // CAPTURE_AUDIT (diagnostic logging only — no capture logic change):
+        // what RoomPlan handed us on completion, BEFORE any serialization or
+        // upload. Paired with a post-encode count below so we can see whether
+        // anything is lost on the device between here and the payload leaving.
+        let auditTag = "CAPTURE_AUDIT"
+        print("\(auditTag) room received: walls=\(processedResult.walls.count) "
+            + "floors=\(processedResult.floors.count) doors=\(processedResult.doors.count) "
+            + "windows=\(processedResult.windows.count) openings=\(processedResult.openings.count)")
+        for (i, wall) in processedResult.walls.enumerated() {
+            print("\(auditTag) wall[\(i)] id=\(wall.identifier) "
+                + "width=\(wall.dimensions.x) height=\(wall.dimensions.y)")
+        }
+        for (i, door) in processedResult.doors.enumerated() {
+            print("\(auditTag) door[\(i)] dimensions=[\(door.dimensions.x), \(door.dimensions.y), \(door.dimensions.z)] "
+                + "parentIdentifier=\(String(describing: door.parentIdentifier))")
+        }
+        for (i, window) in processedResult.windows.enumerated() {
+            print("\(auditTag) window[\(i)] dimensions=[\(window.dimensions.x), \(window.dimensions.y), \(window.dimensions.z)] "
+                + "parentIdentifier=\(String(describing: window.parentIdentifier))")
+        }
+        for (i, opening) in processedResult.openings.enumerated() {
+            print("\(auditTag) opening[\(i)] dimensions=[\(opening.dimensions.x), \(opening.dimensions.y), \(opening.dimensions.z)] "
+                + "parentIdentifier=\(String(describing: opening.parentIdentifier))")
+        }
+        if let videoFormat = captureView.captureSession.arSession.configuration?.videoFormat {
+            print("\(auditTag) videoFormat: resolution="
+                + "\(Int(videoFormat.imageResolution.width))x\(Int(videoFormat.imageResolution.height)) "
+                + "framesPerSecond=\(videoFormat.framesPerSecond)")
+        } else {
+            print("\(auditTag) videoFormat: unavailable (no arSession configuration)")
+        }
+
         do {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             let data = try encoder.encode(processedResult)
+
+            // CAPTURE_AUDIT: the same counts, read back from the serialized
+            // payload immediately after encoding and before upload — any
+            // difference from the counts above is loss during serialization.
+            if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                func count(_ key: String) -> Int { (object[key] as? [Any])?.count ?? -1 }
+                print("\(auditTag) serialized payload (\(data.count) bytes): "
+                    + "walls=\(count("walls")) floors=\(count("floors")) doors=\(count("doors")) "
+                    + "windows=\(count("windows")) openings=\(count("openings"))")
+            } else {
+                print("\(auditTag) serialized payload (\(data.count) bytes): could not parse JSON for counts")
+            }
+
             onFinalResult?(.success(data))
         } catch {
             onFinalResult?(.failure(error))
